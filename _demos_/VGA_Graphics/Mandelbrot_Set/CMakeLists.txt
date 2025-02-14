@@ -1,0 +1,15 @@
+add_executable(VGA_Mandelbrot_Set)
+
+# must match with pio filename and executable name from above
+pico_generate_pio_header(VGA_Mandelbrot_Set hsync.pio)
+pico_generate_pio_header(VGA_Mandelbrot_Set vsync.pio)
+pico_generate_pio_header(VGA_Mandelbrot_Set rgb.pio)
+
+# must match with executable name and source file names
+target_sources(VGA_Mandelbrot_Set PRIVATE mandelbrot_fixvfloat.c vga16_graphics.c)
+
+# must match with executable name
+target_link_libraries(VGA_Mandelbrot_Set PRIVATE pico_stdlib pico_multicore hardware_pio hardware_dma)
+
+# must match with executable name
+pico_add_extra_outputs(VGA_Mandelbrot_Set)
