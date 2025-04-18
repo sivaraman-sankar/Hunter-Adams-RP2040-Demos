@@ -1,3 +1,17 @@
+# == DO NOT EDIT THE FOLLOWING LINES for the Raspberry Pi Pico VS Code Extension to work ==
+if(WIN32)
+    set(USERHOME $ENV{USERPROFILE})
+else()
+    set(USERHOME $ENV{HOME})
+endif()
+set(sdkVersion 2.1.1)
+set(toolchainVersion 14_2_Rel1)
+set(picotoolVersion 2.1.1)
+set(picoVscode ${USERHOME}/.pico-sdk/cmake/pico-vscode.cmake)
+if (EXISTS ${picoVscode})
+    include(${picoVscode})
+endif()
+# ====================================================================================
 cmake_minimum_required(VERSION 3.12)
 
 # Comment the line below in for the Pico W examples to build
@@ -16,17 +30,17 @@ set(HUNTER_PICO_EXAMPLES_PATH ${PROJECT_SOURCE_DIR})
 pico_sdk_init()
 
 # Add multi example
-add_subdirectory(Human_Input)
-add_subdirectory(Audio)
-add_subdirectory(Sensors)
-add_subdirectory(Basic_Demos)
-add_subdirectory(Stepper_Motors)
+# add_subdirectory(Human_Input)
+# add_subdirectory(Audio)
+# add_subdirectory(Sensors)
+# add_subdirectory(Basic_Demos)
+# add_subdirectory(Stepper_Motors)
 add_subdirectory(VGA_Graphics)
-add_subdirectory(Networking)
-add_subdirectory(PWM)
-add_subdirectory(Protothreads)
-add_subdirectory(Bootloaders)
-add_subdirectory(Bluetooth)
+# add_subdirectory(Networking)
+# add_subdirectory(PWM)
+# add_subdirectory(Protothreads)
+# add_subdirectory(Bootloaders)
+# add_subdirectory(Bluetooth)
 
 add_compile_options(-Wall
         -Wno-format          # int != int32_t as far as the compiler is concerned because gcc has int32_t as long int

@@ -4,7 +4,7 @@ add_executable(PWM_Demo)
 target_sources(PWM_Demo PRIVATE pwm-demo.c)
 
 # Add pico_multicore which is required for multicore functionality
-target_link_libraries(PWM_Demo pico_stdlib pico_multicore pico_bootsel_via_double_reset hardware_pwm hardware_irq)
+target_link_libraries(PWM_Demo pico_stdlib pico_multicore pico_bootsel_via_double_reset hardware_pwm hardware_irq hardware_dma hardware_adc hardware_pio hardware_i2c)
 
 # create map/bin/hex file etc.
 pico_add_extra_outputs(PWM_Demo)

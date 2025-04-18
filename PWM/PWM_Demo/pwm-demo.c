@@ -1,13 +1,13 @@
 /**
  * V. Hunter Adams (vha3@cornell.edu)
  * PWM demo code with serial input
- * 
+ *
  * This demonstration sets a PWM duty cycle to a
  * user-specified value.
- * 
+ *
  * HARDWARE CONNECTIONS
  *   - GPIO 4 ---> PWM output
- * 
+ *
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -32,43 +32,50 @@
 #define PWM_OUT 4
 
 // Variable to hold PWM slice number
-uint slice_num ;
+uint slice_num;
 
 // PWM duty cycle
-volatile int control ;
-volatile int old_control ;
+volatile int control;
+volatile int old_control;
 
 // PWM interrupt service routine
-void on_pwm_wrap() {
+void on_pwm_wrap()
+{
     // Clear the interrupt flag that brought us here
     pwm_clear_irq(pwm_gpio_to_slice_num(PWM_OUT));
     // Update duty cycle
-    if (control!=old_control) {
-        old_control = control ;
-        pwm_set_chan_level(slice_num, PWM_CHAN_A, control);
+    if (control != old_control)
+    {
+        old_control = control;
+        pwm_set_chan_level(slice_num, PWM_CHAN_A, WRAPVAL - control);
     }
 }
 
 // User input thread
-static PT_THREAD (protothread_serial(struct pt *pt))
+static PT_THREAD(protothread_serial(struct pt *pt))
 {
-    PT_BEGIN(pt) ;
-    static int test_in ;
-    while(1) {
+    PT_BEGIN(pt);
+    static int test_in;
+    while (1)
+    {
         sprintf(pt_serial_out_buffer, "input a duty cycle (0-5000): ");
-        serial_write ;
+        serial_write;
         // spawn a thread to do the non-blocking serial read
-        serial_read ;
+        serial_read;
         // convert input string to number
-        sscanf(pt_serial_in_buffer,"%d", &test_in) ;
-        if (test_in > 5000) continue ;
-        else if (test_in < 0) continue ;
-        else control = test_in ;
+        sscanf(pt_serial_in_buffer, "%d", &test_in);
+        if (test_in > 5000)
+            continue;
+        else if (test_in < 0)
+            continue;
+        else
+            control = test_in;
     }
-    PT_END(pt) ;
+    PT_END(pt);
 }
 
-int main() {
+int main()
+{
 
     // Initialize stdio
     stdio_init_all();
@@ -90,8 +97,8 @@ int main() {
     irq_set_enabled(PWM_IRQ_WRAP, true);
 
     // This section configures the period of the PWM signals
-    pwm_set_wrap(slice_num, WRAPVAL) ;
-    pwm_set_clkdiv(slice_num, CLKDIV) ;
+    pwm_set_wrap(slice_num, WRAPVAL);
+    pwm_set_clkdiv(slice_num, CLKDIV);
 
     // This sets duty cycle
     pwm_set_chan_level(slice_num, PWM_CHAN_A, 3125);
@@ -102,7 +109,6 @@ int main() {
     ////////////////////////////////////////////////////////////////////////
     ///////////////////////////// ROCK AND ROLL ////////////////////////////
     ////////////////////////////////////////////////////////////////////////
-    pt_add_thread(protothread_serial) ;
-    pt_schedule_start ;
-
+    pt_add_thread(protothread_serial);
+    pt_schedule_start;
 }

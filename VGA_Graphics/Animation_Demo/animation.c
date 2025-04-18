@@ -55,7 +55,7 @@ typedef signed int fix15 ;
 #define hitBottom(b) (b>int2fix15(380))
 #define hitTop(b) (b<int2fix15(100))
 #define hitLeft(a) (a<int2fix15(100))
-#define hitRight(a) (a>int2fix15(540))
+#define hitRight(a) (a>int2fix15(5 40))
 
 // uS per frame
 #define FRAME_RATE 33000
