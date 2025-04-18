@@ -1,6 +1,6 @@
-/**
+/***************
  *  V. Hunter Adams (vha3@cornell.edu)
- 
+
     A timer interrupt on core 0 generates a 400Hz beep
     thru an SPI DAC, once per second. A single protothread
     blinks the LED.
@@ -14,22 +14,26 @@
 
  */
 
-// Include necessary libraries
+// Consolidated includes
 #include <stdio.h>
+#include <stdlib.h>
 #include <math.h>
 #include <string.h>
 
 #include "pico/stdlib.h"
+#include "pico/divider.h"
 #include "pico/multicore.h"
 
 #include "hardware/pio.h"
 #include "hardware/dma.h"
-#include "hardware/sync.h"
+#include "hardware/clocks.h"
+#include "hardware/pll.h"
 #include "hardware/spi.h"
+#include "hardware/adc.h"
+#include "hardware/sync.h"
 
-// Include protothreads
 #include "pt_cornell_rp2040_v1_3.h"
-
+#include "vga16_graphics.h"
 
 // Enum for key scale states
 typedef enum { A_MAJOR, C_MAJOR, G_MAJOR } KeyState;
@@ -112,7 +116,13 @@ uint16_t DAC_data_0 ; // output value
 #define LDAC     8
 #define LED      25
 #define SPI_PORT spi0
-
+// ADC constants
+#define ADC0_PIN 26
+#define ADC1_PIN 27
+#define ADC2_PIN 28
+#define ADC0_CHAN 0
+#define ADC1_CHAN 1
+#define ADC2_CHAN 2
 // Keypad pin configurations
 #define BASE_KEYPAD_PIN 9
 #define KEYROWS         4
@@ -125,6 +135,7 @@ unsigned int keycodes[12] = {   0x28, 0x11, 0x21, 0x41, 0x12,
                                 0x18, 0x48} ;
 unsigned int scancodes[4] = {   0x01, 0x02, 0x04, 0x08} ;
 unsigned int button = 0x70 ;
+volatile fix15 pitch_multiplier_fix15 = float2fix15(1.0); // Default: no pitch bend
 
 
 char keytext[40];
@@ -132,6 +143,41 @@ int prev_key = 0;
 
 //GPIO for timing the ISR
 #define ISR_GPIO 2
+
+
+/* ===== SETUP FUNCTIONS ===== */
+
+void setupADC0() {
+    adc_init();
+    adc_gpio_init(ADC0_PIN);
+    adc_select_input(ADC0_CHAN);
+}
+
+void setupADC1() {
+    adc_init();
+    adc_gpio_init(ADC1_PIN);
+    adc_select_input(ADC1_CHAN);
+}
+
+void setupADC2() {
+    adc_init();
+    adc_gpio_init(ADC2_PIN);
+    adc_select_input(ADC2_CHAN);
+}
+
+
+void setupKeypad() {
+    // Initialize the keypad GPIO's
+    gpio_init_mask((0x7F << BASE_KEYPAD_PIN));
+    // Set row-pins to output
+    gpio_set_dir_out_masked((0xF << BASE_KEYPAD_PIN));
+    // Set all output pins to low
+    gpio_put_masked((0xF << BASE_KEYPAD_PIN), (0x0 << BASE_KEYPAD_PIN));
+    // Turn on pulldown resistors for column pins (on by default)
+    gpio_pull_down((BASE_KEYPAD_PIN + 4));
+    gpio_pull_down((BASE_KEYPAD_PIN + 5));
+    gpio_pull_down((BASE_KEYPAD_PIN + 6));
+}
 
 // This timer ISR is called on core 0
 static void alarm_irq(void) {
@@ -146,7 +192,9 @@ static void alarm_irq(void) {
     timer_hw->alarm[ALARM_NUM] = timer_hw->timerawl + DELAY ;
 
     if (active_key >= 0 && active_key < 5) {
-        phase_incr_main_0 = (unsigned int)((pentatonic_freqs[current_key][active_key] * two32) / Fs);
+        float base_freq = pentatonic_freqs[current_key][active_key];
+        float adjusted_freq = base_freq * fix2float15(pitch_multiplier_fix15);
+        phase_incr_main_0 = (unsigned int)((adjusted_freq * two32) / Fs);
         phase_accum_main_0 += phase_incr_main_0;
         DAC_output_0 = fix2int15(multfix15(current_amplitude_0,
             sin_table[phase_accum_main_0 >> 24])) + 2048;
@@ -181,6 +229,47 @@ static void alarm_irq(void) {
 
 }
 
+
+
+// Fixed-point multiplier range for pitch bending: [0.9, 1.1]
+#define FIX15_MIN_PITCH float2fix15(0.9)
+#define FIX15_RANGE_PITCH float2fix15(0.2)
+#define BEND_THRESHOLD float2fix15(0.010)
+
+
+static PT_THREAD(protothread_pitch_bend(struct pt *pt))
+{
+    PT_BEGIN(pt);
+
+    static uint16_t adc_raw;
+    static fix15 new_fix_mult;
+    static fix15 last_fix_mult = float2fix15(1.0); // Default to no bend
+
+    while (1)
+    {
+        // Read the potentiometer on ADC0
+        adc_select_input(ADC0_CHAN);
+        adc_raw = adc_read();
+
+        // Map [0, 4095] to [0.9, 1.1] in fixed point
+        new_fix_mult = FIX15_MIN_PITCH + multfix15(int2fix15(adc_raw), divfix(FIX15_RANGE_PITCH, int2fix15(4095)));
+
+        // Filter potentiometer noise
+        if (absfix15(new_fix_mult - last_fix_mult) >= BEND_THRESHOLD) {
+            pitch_multiplier_fix15 = new_fix_mult;
+            printf("\nPitch Multiplier: %f\n", fix2float15(pitch_multiplier_fix15));
+            // adc raw 
+            printf("ADC Raw: %d\n", adc_raw);
+            last_fix_mult = new_fix_mult;
+        }
+
+        
+
+        PT_YIELD_usec(30000);
+    }
+
+    PT_END(pt);
+}
 
 
 // This thread runs on core 1
@@ -222,7 +311,7 @@ static PT_THREAD (protothread_core_1(struct pt *pt))
         else (i=-1) ;
 
         // Print key to terminal
-        printf("\nKey pressed: %d", i) ;
+        // printf("\nKey pressed: %d", i) ;
 
         // Update active key
         if (i >= 1 && i <= 5) {
@@ -318,21 +407,14 @@ int main() {
     // Write the lower 32 bits of the target time to the alarm register, arming it.
     timer_hw->alarm[ALARM_NUM] = timer_hw->timerawl + DELAY ;
 
-    ////////////////// KEYPAD INITS ///////////////////////
-    // Initialize the keypad GPIO's
-    gpio_init_mask((0x7F << BASE_KEYPAD_PIN)) ;
-    // Set row-pins to output
-    gpio_set_dir_out_masked((0xF << BASE_KEYPAD_PIN)) ;
-    // Set all output pins to low
-    gpio_put_masked((0xF << BASE_KEYPAD_PIN), (0x0 << BASE_KEYPAD_PIN)) ;
-    // Turn on pulldown resistors for column pins (on by default)
-    gpio_pull_down((BASE_KEYPAD_PIN + 4)) ;
-    gpio_pull_down((BASE_KEYPAD_PIN + 5)) ;
-    gpio_pull_down((BASE_KEYPAD_PIN + 6)) ;
+    
+    setupADC0() ;
+    setupKeypad() ;
 
 
     // Add core 0 threads
     pt_add_thread(protothread_core_1) ;
+    pt_add_thread(protothread_pitch_bend);
 
     // Start scheduling core 0 threads
     pt_schedule_start ;
