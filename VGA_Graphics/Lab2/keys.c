@@ -232,9 +232,9 @@ static void alarm_irq(void) {
 
 
 // Fixed-point multiplier range for pitch bending: [0.9, 1.1]
-#define FIX15_MIN_PITCH float2fix15(0.9)
-#define FIX15_RANGE_PITCH float2fix15(0.2)
-#define BEND_THRESHOLD float2fix15(0.010)
+#define FIX15_MIN_PITCH float2fix15(1.0)
+#define FIX15_RANGE_PITCH float2fix15(1.12)
+#define BEND_THRESHOLD float2fix15(0.005)
 
 
 static PT_THREAD(protothread_pitch_bend(struct pt *pt))
