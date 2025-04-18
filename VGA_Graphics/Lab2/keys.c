@@ -55,7 +55,10 @@ typedef signed int fix15 ;
 volatile unsigned int phase_accum_main_0;
 volatile unsigned int phase_incr_main_0 = (400.0*two32)/Fs ;
 
-// DDS sine table (populated in main())
+// Frequencies for C major pentatonic scale (MIDI: 60, 62, 64, 67, 69)
+float pentatonic_freqs[] = {261.63, 293.66, 329.63, 392.00, 440.00};
+volatile int current_note_index = -1;
+
 #define sine_table_size 256
 fix15 sin_table[sine_table_size] ;
 
@@ -173,6 +176,11 @@ static void alarm_irq(void) {
         }
     }
 
+    // Change frequency based on current note index
+    if (current_note_index >= 0 && current_note_index < 5) {
+        phase_incr_main_0 = (unsigned int)((pentatonic_freqs[current_note_index] * two32) / Fs);
+    }
+
     // De-assert the GPIO when we leave the interrupt
     gpio_put(ISR_GPIO, 0) ;
 
@@ -191,7 +199,7 @@ static PT_THREAD (protothread_core_1(struct pt *pt))
     static uint32_t keypad ;
 
     while(1) {
-
+        // Blink LED and check for key press
         gpio_put(LED, !gpio_get(LED)) ;
 
         // Scan the keypad!
@@ -220,6 +228,11 @@ static PT_THREAD (protothread_core_1(struct pt *pt))
 
         // Print key to terminal
         printf("\nKey pressed: %d", i) ;
+
+        // Change DDS tone based on key 1-5
+        if (i >= 0 && i <= 4) {
+            current_note_index = i;
+        }
 
         PT_YIELD_usec(30000) ;
     }
@@ -318,4 +331,5 @@ int main() {
     // Start scheduling core 0 threads
     pt_schedule_start ;
 
+    current_note_index = -1; // No tone by default
 }
