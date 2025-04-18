@@ -30,6 +30,10 @@
 // Include protothreads
 #include "pt_cornell_rp2040_v1_3.h"
 
+// Enum for key scale states
+typedef enum { A_MAJOR, C_MAJOR, G_MAJOR } KeyState;
+volatile KeyState current_key = A_MAJOR;
+
 // Low-level alarm infrastructure we'll be using
 #define ALARM_NUM 0
 #define ALARM_IRQ TIMER_IRQ_0
@@ -55,8 +59,12 @@ typedef signed int fix15 ;
 volatile unsigned int phase_accum_main_0;
 volatile unsigned int phase_incr_main_0 = (400.0*two32)/Fs ;
 
-// Frequencies for C major pentatonic scale (MIDI: 60, 62, 64, 67, 69)
-float pentatonic_freqs[] = {261.63, 293.66, 329.63, 392.00, 440.00};
+// Base frequencies for A, C, and G major pentatonic scales
+float pentatonic_freqs[3][5] = {
+    {220.00, 246.94, 293.66, 329.63, 370.00}, // A major
+    {261.63, 293.66, 329.63, 392.00, 440.00}, // C major
+    {196.00, 220.00, 246.94, 293.66, 329.63}  // G major
+};
 volatile int current_note_index = -1;
 
 #define sine_table_size 256
@@ -136,7 +144,7 @@ static void alarm_irq(void) {
     timer_hw->alarm[ALARM_NUM] = timer_hw->timerawl + DELAY ;
 
     if (current_note_index >= 0 && current_note_index < 5) {
-        phase_incr_main_0 = (unsigned int)((pentatonic_freqs[current_note_index] * two32) / Fs);
+        phase_incr_main_0 = (unsigned int)((pentatonic_freqs[current_key][current_note_index] * two32) / Fs);
         // DDS phase and sine table lookup
         phase_accum_main_0 += phase_incr_main_0;
         DAC_output_0 = fix2int15(multfix15(current_amplitude_0,
@@ -213,6 +221,14 @@ static PT_THREAD (protothread_core_1(struct pt *pt))
         // Change DDS tone based on key 1-5
         if (i >= 1 && i <= 5) {
             current_note_index = i-1;
+        }
+        // Keypad mapping for scale selection: 6=A_MAJOR, 7=C_MAJOR, 8=G_MAJOR
+        else if (i == 6) {
+            current_key = A_MAJOR;
+        } else if (i == 7) {
+            current_key = C_MAJOR;
+        } else if (i == 8) {
+            current_key = G_MAJOR;
         }
 
         PT_YIELD_usec(30000) ;
