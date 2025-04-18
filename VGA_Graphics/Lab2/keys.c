@@ -135,51 +135,32 @@ static void alarm_irq(void) {
     // Reset the alarm register
     timer_hw->alarm[ALARM_NUM] = timer_hw->timerawl + DELAY ;
 
-    if (STATE_0 == 0) {
-        // DDS phase and sine table lookup
-        phase_accum_main_0 += phase_incr_main_0  ;
-        DAC_output_0 = fix2int15(multfix15(current_amplitude_0,
-            sin_table[phase_accum_main_0>>24])) + 2048 ;
-
-        // Ramp up amplitude
-        if (count_0 < ATTACK_TIME) {
-            current_amplitude_0 = (current_amplitude_0 + attack_inc) ;
-        }
-        // Ramp down amplitude
-        else if (count_0 > BEEP_DURATION - DECAY_TIME) {
-            current_amplitude_0 = (current_amplitude_0 - decay_inc) ;
-        }
-
-        // Mask with DAC control bits
-        DAC_data_0 = (DAC_config_chan_B | (DAC_output_0 & 0xffff))  ;
-
-        // SPI write (no spinlock b/c of SPI buffer)
-        spi_write16_blocking(SPI_PORT, &DAC_data_0, 1) ;
-
-        // Increment the counter
-        count_0 += 1 ;
-
-        // State transition?
-        if (count_0 == BEEP_DURATION) {
-            STATE_0 = 1 ;
-            count_0 = 0 ;
-        }
-    }
-
-    // State transition?
-    else {
-        count_0 += 1 ;
-        if (count_0 == BEEP_REPEAT_INTERVAL) {
-            current_amplitude_0 = 0 ;
-            STATE_0 = 0 ;
-            count_0 = 0 ;
-        }
-    }
-
-    // Change frequency based on current note index
     if (current_note_index >= 0 && current_note_index < 5) {
         phase_incr_main_0 = (unsigned int)((pentatonic_freqs[current_note_index] * two32) / Fs);
+        // DDS phase and sine table lookup
+        phase_accum_main_0 += phase_incr_main_0;
+        DAC_output_0 = fix2int15(multfix15(current_amplitude_0,
+            sin_table[phase_accum_main_0 >> 24])) + 2048;
+
+        if (count_0 < ATTACK_TIME) {
+            current_amplitude_0 += attack_inc;
+        } else if (count_0 > BEEP_DURATION - DECAY_TIME) {
+            current_amplitude_0 -= decay_inc;
+        }
+
+        DAC_data_0 = (DAC_config_chan_B | (DAC_output_0 & 0xffff));
+        spi_write16_blocking(SPI_PORT, &DAC_data_0, 1);
+
+        count_0++;
+
+        if (count_0 >= BEEP_DURATION) {
+            current_note_index = -1;
+            current_amplitude_0 = 0;
+            count_0 = 0;
+        }
     }
+
+    // Removed legacy STATE_0 and BEEP_REPEAT_INTERVAL logic; frequency update handled above.
 
     // De-assert the GPIO when we leave the interrupt
     gpio_put(ISR_GPIO, 0) ;
@@ -230,8 +211,8 @@ static PT_THREAD (protothread_core_1(struct pt *pt))
         printf("\nKey pressed: %d", i) ;
 
         // Change DDS tone based on key 1-5
-        if (i >= 0 && i <= 4) {
-            current_note_index = i;
+        if (i >= 1 && i <= 5) {
+            current_note_index = i-1;
         }
 
         PT_YIELD_usec(30000) ;
