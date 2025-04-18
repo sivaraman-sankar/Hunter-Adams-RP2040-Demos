@@ -30,6 +30,7 @@
 // Include protothreads
 #include "pt_cornell_rp2040_v1_3.h"
 
+
 // Enum for key scale states
 typedef enum { A_MAJOR, C_MAJOR, G_MAJOR } KeyState;
 volatile KeyState current_key = A_MAJOR;
@@ -66,6 +67,7 @@ float pentatonic_freqs[3][5] = {
     {196.00, 220.00, 246.94, 293.66, 329.63}  // G major
 };
 volatile int current_note_index = -1;
+volatile int active_key = -1;
 
 #define sine_table_size 256
 fix15 sin_table[sine_table_size] ;
@@ -143,28 +145,32 @@ static void alarm_irq(void) {
     // Reset the alarm register
     timer_hw->alarm[ALARM_NUM] = timer_hw->timerawl + DELAY ;
 
-    if (current_note_index >= 0 && current_note_index < 5) {
-        phase_incr_main_0 = (unsigned int)((pentatonic_freqs[current_key][current_note_index] * two32) / Fs);
-        // DDS phase and sine table lookup
+    if (active_key >= 0 && active_key < 5) {
+        phase_incr_main_0 = (unsigned int)((pentatonic_freqs[current_key][active_key] * two32) / Fs);
         phase_accum_main_0 += phase_incr_main_0;
         DAC_output_0 = fix2int15(multfix15(current_amplitude_0,
             sin_table[phase_accum_main_0 >> 24])) + 2048;
 
-        if (count_0 < ATTACK_TIME) {
+        // Maintain full amplitude
+        if (current_amplitude_0 < max_amplitude) {
             current_amplitude_0 += attack_inc;
-        } else if (count_0 > BEEP_DURATION - DECAY_TIME) {
-            current_amplitude_0 -= decay_inc;
+            if (current_amplitude_0 > max_amplitude) current_amplitude_0 = max_amplitude;
         }
 
         DAC_data_0 = (DAC_config_chan_B | (DAC_output_0 & 0xffff));
         spi_write16_blocking(SPI_PORT, &DAC_data_0, 1);
+    } else {
+        // No key held, ramp down amplitude
+        if (current_amplitude_0 > 0) {
+            current_amplitude_0 -= decay_inc;
+            if (current_amplitude_0 < 0) current_amplitude_0 = 0;
 
-        count_0++;
+            phase_accum_main_0 += phase_incr_main_0;
+            DAC_output_0 = fix2int15(multfix15(current_amplitude_0,
+                sin_table[phase_accum_main_0 >> 24])) + 2048;
 
-        if (count_0 >= BEEP_DURATION) {
-            current_note_index = -1;
-            current_amplitude_0 = 0;
-            count_0 = 0;
+            DAC_data_0 = (DAC_config_chan_B | (DAC_output_0 & 0xffff));
+            spi_write16_blocking(SPI_PORT, &DAC_data_0, 1);
         }
     }
 
@@ -218,12 +224,15 @@ static PT_THREAD (protothread_core_1(struct pt *pt))
         // Print key to terminal
         printf("\nKey pressed: %d", i) ;
 
-        // Change DDS tone based on key 1-5
+        // Update active key
         if (i >= 1 && i <= 5) {
-            current_note_index = i-1;
+            active_key = i - 1;
+        } else {
+            active_key = -1;
         }
+
         // Keypad mapping for scale selection: 6=A_MAJOR, 7=C_MAJOR, 8=G_MAJOR
-        else if (i == 6) {
+        if (i == 6) {
             current_key = A_MAJOR;
         } else if (i == 7) {
             current_key = C_MAJOR;
