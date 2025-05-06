@@ -442,6 +442,12 @@ static PT_THREAD(protothread_keys(struct pt *pt))
         // print the white keys - note they are 20 pixels wide and 100 pixels tall
         // however, the black keys are 10 pixels wide and 60 pixels tall and are right aligned with the white keys,
         // hence the white has two parts to it, the top and the bottom, the top is 10 pixels wide and 60 pixels tall and the bottom is 20 pixels wide and 40 pixels tall
+        char *current_pressed_note = get_current_pressed_note();
+
+        if (current_instrument == DRUMS)
+        {
+            strcpy(current_pressed_note, "X");
+        }
 
         // draw the C4 key
         fillRect(x_offset, y_offset, 8, 60, strcmp(current_pressed_note, "C4") == 0 ? ORANGE : WHITE);
@@ -539,6 +545,8 @@ static PT_THREAD(protothread_vga_drums(struct pt *pt))
         // Measure time at start of thread
         begin_time = time_us_32();
 
+        // if current_instrument is drums, then draw a arena around the 2X2 drum set
+        // else erase the arena
         // print 2X2 drum set
         setCursor(x_offset, y_offset);
 
