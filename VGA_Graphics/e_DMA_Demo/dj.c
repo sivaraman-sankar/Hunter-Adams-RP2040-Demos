@@ -606,9 +606,12 @@ static PT_THREAD(protothread_track_state(struct pt *pt))
         setCursor(x_offset + cursor_position, y_offset);
         drawRect(x_offset + cursor_position, y_offset, 2, 2, BLACK);
 
-        cursor_position += 1;
+        if (current_playback_state == PLAY)
+        {
+            cursor_position += 1;
+        }
         setCursor(x_offset + cursor_position, y_offset);
-        drawRect(x_offset + cursor_position, y_offset, 2, 2, GREEN);
+        drawRect(x_offset + cursor_position, y_offset, 3, 3, GREEN);
 
         if (cursor_position >= 160)
         {
@@ -627,7 +630,7 @@ static PT_THREAD(protothread_track_state(struct pt *pt))
         }
         else
         {
-            writeString("<<       Paused     >>");
+            writeString("<<       Paused         >>");
         }
 
         // print backing track name
@@ -961,7 +964,12 @@ void setupDrumsDMA()
 void playback()
 {
     // Start playback
-    dma_start_channel_mask((1u << ctrl_chan_A));
+    dma_channel_set_read_addr(ctrl_chan_A, (void *)&tracks[currentTrack].data, false);
+    dma_channel_set_read_addr(data_chan_A, tracks[currentTrack].data, false);
+    dma_channel_set_trans_count(data_chan_A, tracks[currentTrack].length, false);
+
+    // Start only the control channel — this will chain into data channel
+    dma_channel_start(ctrl_chan_A);
 }
 
 void stopPlayback()
@@ -1083,13 +1091,14 @@ static PT_THREAD(thread_keypad_input(struct pt *pt))
                     currentTrack = (currentTrack + 1) % 2;
                     stopPlayback();
                     setupDMA();
-                    playback();
+                    if (current_playback_state == PLAY)
+                        playback();
                 }
                 if (possible == 11)
                 {
                     // # Button -> change instrumment
                     current_instrument = (current_instrument + 1) % NUM_INSTRUMENTS;
-                    current_playback_state = PLAY;
+                    // current_playback_state = PLAY;
                     // send_note_to_vga(MSG_INSTRUMENT_CHANGE, (char)next_instrument);
                 }
                 if (possible == 0)
@@ -1098,7 +1107,7 @@ static PT_THREAD(thread_keypad_input(struct pt *pt))
                     if (current_playback_state == PLAY)
                     {
                         stopPlayback();
-                        setupDMA();
+                        // setupDMA();
                         playback();
                     }
                     else
