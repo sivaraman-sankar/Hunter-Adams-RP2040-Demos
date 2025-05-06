@@ -238,8 +238,8 @@ int prev_key = 0;
 #define Y_DIMENSION 480
 
 int cursor_position = 0;
-char current_pressed_note = 'C'; // Default to C4
-int current_pressed_drums = 0;   // Default to 0, ranges from [0,3]
+char current_pressed_note[4] = "C4"; // Default to C4
+int current_pressed_drums = 0;       // Default to 0, ranges from [0,3]
 
 void set_current_instrument(uint8_t instrument)
 {
@@ -262,79 +262,105 @@ void set_current_pressed_note(int note)
 
     switch (current_key)
     {
-    case 1:
+    case 0:
         // C Major
         switch (note)
         {
         case 1:
-            current_pressed_note = 'C';
+            strcpy(current_pressed_note, "C4");
             break;
         case 2:
-            current_pressed_note = 'D';
+            strcpy(current_pressed_note, "D4");
             break;
         case 3:
-            current_pressed_note = 'E';
+            strcpy(current_pressed_note, "E4");
             break;
         case 4:
-            current_pressed_note = 'G';
+            strcpy(current_pressed_note, "F4");
             break;
         case 5:
-            current_pressed_note = 'A';
+            strcpy(current_pressed_note, "G4");
+            break;
+        case 6:
+            strcpy(current_pressed_note, "A4");
+            break;
+        case 7:
+            strcpy(current_pressed_note, "B4");
+            break;
+        case 8:
+            strcpy(current_pressed_note, "C5");
             break;
         }
         break;
 
-    case 2:
+    case 1:
         // A Major
         switch (note)
         {
         case 1:
-            current_pressed_note = 'A';
+            strcpy(current_pressed_note, "A4");
             break;
         case 2:
-            current_pressed_note = 'B';
+            strcpy(current_pressed_note, "B4");
             break;
-        case 3:
-            current_pressed_note = 'c';
+        case 3: // c is mapped to C#
+            strcpy(current_pressed_note, "C#5");
+            break;
+        case 4:
+            strcpy(current_pressed_note, "D5");
             break;
         case 5:
-            current_pressed_note = 'E';
+            strcpy(current_pressed_note, "E5");
             break;
         case 6:
-            current_pressed_note = 'f';
+            strcpy(current_pressed_note, "F#5");
+            break;
+        case 7:
+            strcpy(current_pressed_note, "G#5");
+            break;
+        case 8: // A5 is mapped to 'x' ; not played
+            strcpy(current_pressed_note, "A5");
             break;
         }
+
         break;
 
-    case 3:
-        // G Major
+    case 2:
+        // G Major: G4, A4, B4, C5, D5, E5, F#5, G5
         switch (note)
         {
         case 1:
-            current_pressed_note = 'G';
+            strcpy(current_pressed_note, "G4");
             break;
         case 2:
-            current_pressed_note = 'A';
+            strcpy(current_pressed_note, "A4");
             break;
         case 3:
-            current_pressed_note = 'B';
+            strcpy(current_pressed_note, "B4");
+            break;
+        case 4:
+            strcpy(current_pressed_note, "C5");
             break;
         case 5:
-            current_pressed_note = 'D';
+            strcpy(current_pressed_note, "D5");
             break;
         case 6:
-            current_pressed_note = 'E';
+            strcpy(current_pressed_note, "E5");
+            break;
+        case 7:
+            strcpy(current_pressed_note, "F#5");
+            break;
+        case 8: // G5 is mapped to 'x' ; not played
+            strcpy(current_pressed_note, "G5");
             break;
         }
         break;
     default:
-        // Default to C Major if no valid key signature is selected
-        current_pressed_note = 'C';
         break;
     }
 }
 
-char get_current_pressed_note()
+char *get_current_pressed_note()
 {
     return current_pressed_note;
 }
@@ -416,47 +442,75 @@ static PT_THREAD(protothread_keys(struct pt *pt))
         // print the white keys - note they are 20 pixels wide and 100 pixels tall
         // however, the black keys are 10 pixels wide and 60 pixels tall and are right aligned with the white keys,
         // hence the white has two parts to it, the top and the bottom, the top is 10 pixels wide and 60 pixels tall and the bottom is 20 pixels wide and 40 pixels tall
-        char current_note = get_current_pressed_note();
 
         // draw the C4 key
-        fillRect(x_offset, y_offset, 8, 60, current_note == 'C' ? ORANGE : WHITE);
-        fillRect(x_offset, y_offset + 60, 18, 40, current_note == 'C' ? ORANGE : WHITE);
+        fillRect(x_offset, y_offset, 8, 60, strcmp(current_pressed_note, "C4") == 0 ? ORANGE : WHITE);
+        fillRect(x_offset, y_offset + 60, 18, 40, strcmp(current_pressed_note, "C4") == 0 ? ORANGE : WHITE);
 
         // draw the D4 key
-        fillRect(x_offset + 20, y_offset, 8, 60, current_note == 'D' ? ORANGE : WHITE);
-        fillRect(x_offset + 20, y_offset + 60, 18, 40, current_note == 'D' ? ORANGE : WHITE);
+        fillRect(x_offset + 20, y_offset, 8, 60, strcmp(current_pressed_note, "D4") == 0 ? ORANGE : WHITE);
+        fillRect(x_offset + 20, y_offset + 60, 18, 40, strcmp(current_pressed_note, "D4") == 0 ? ORANGE : WHITE);
 
         // draw the E4 key
-        fillRect(x_offset + 40, y_offset, 18, 60, current_note == 'E' ? ORANGE : WHITE);
-        fillRect(x_offset + 40, y_offset + 60, 18, 40, current_note == 'E' ? ORANGE : WHITE);
+        fillRect(x_offset + 40, y_offset, 18, 60, strcmp(current_pressed_note, "E4") == 0 ? ORANGE : WHITE);
+        fillRect(x_offset + 40, y_offset + 60, 18, 40, strcmp(current_pressed_note, "E4") == 0 ? ORANGE : WHITE);
 
         // draw the F4 key
-        fillRect(x_offset + 60, y_offset, 8, 60, current_note == 'F' ? ORANGE : WHITE);
-        fillRect(x_offset + 60, y_offset + 60, 18, 40, current_note == 'F' ? ORANGE : WHITE);
+        fillRect(x_offset + 60, y_offset, 8, 60, strcmp(current_pressed_note, "F4") == 0 ? ORANGE : WHITE);
+        fillRect(x_offset + 60, y_offset + 60, 18, 40, strcmp(current_pressed_note, "F4") == 0 ? ORANGE : WHITE);
 
         // draw the G4 key
-        fillRect(x_offset + 80, y_offset, 18, 60, current_note == 'G' ? ORANGE : WHITE);
-        fillRect(x_offset + 80, y_offset + 60, 18, 40, current_note == 'G' ? ORANGE : WHITE);
+        fillRect(x_offset + 80, y_offset, 18, 60, strcmp(current_pressed_note, "G4") == 0 ? ORANGE : WHITE);
+        fillRect(x_offset + 80, y_offset + 60, 18, 40, strcmp(current_pressed_note, "G4") == 0 ? ORANGE : WHITE);
 
         // draw the A4 key
-        fillRect(x_offset + 100, y_offset, 8, 60, current_note == 'A' ? ORANGE : WHITE);
-        fillRect(x_offset + 100, y_offset + 60, 18, 40, current_note == 'A' ? ORANGE : WHITE);
+        fillRect(x_offset + 100, y_offset, 8, 60, strcmp(current_pressed_note, "A4") == 0 ? ORANGE : WHITE);
+        fillRect(x_offset + 100, y_offset + 60, 18, 40, strcmp(current_pressed_note, "A4") == 0 ? ORANGE : WHITE);
 
         // draw the B4 key
-        fillRect(x_offset + 120, y_offset, 18, 60, current_note == 'B' ? ORANGE : WHITE);
-        fillRect(x_offset + 120, y_offset + 60, 18, 40, current_note == 'B' ? ORANGE : WHITE);
+        fillRect(x_offset + 120, y_offset, 18, 60, strcmp(current_pressed_note, "B4") == 0 ? ORANGE : WHITE);
+        fillRect(x_offset + 120, y_offset + 60, 18, 40, strcmp(current_pressed_note, "B4") == 0 ? ORANGE : WHITE);
+
+        // draw the C5 key
+        fillRect(x_offset + 140, y_offset, 8, 60, strcmp(current_pressed_note, "C5") == 0 ? ORANGE : WHITE);
+        fillRect(x_offset + 140, y_offset + 60, 18, 40, strcmp(current_pressed_note, "C5") == 0 ? ORANGE : WHITE);
+        // draw the D5 key
+        fillRect(x_offset + 160, y_offset, 8, 60, strcmp(current_pressed_note, "D5") == 0 ? ORANGE : WHITE);
+        fillRect(x_offset + 160, y_offset + 60, 18, 40, strcmp(current_pressed_note, "D5") == 0 ? ORANGE : WHITE);
+        // draw the E5 key
+        fillRect(x_offset + 180, y_offset, 18, 60, strcmp(current_pressed_note, "E5") == 0 ? ORANGE : WHITE);
+        fillRect(x_offset + 180, y_offset + 60, 18, 40, strcmp(current_pressed_note, "E5") == 0 ? ORANGE : WHITE);
+        // draw the F5 key
+        fillRect(x_offset + 200, y_offset, 8, 60, strcmp(current_pressed_note, "F5") == 0 ? ORANGE : WHITE);
+        fillRect(x_offset + 200, y_offset + 60, 18, 40, strcmp(current_pressed_note, "F5") == 0 ? ORANGE : WHITE);
+        // draw the G5 key
+        fillRect(x_offset + 220, y_offset, 18, 60, strcmp(current_pressed_note, "G5") == 0 ? ORANGE : WHITE);
+        fillRect(x_offset + 220, y_offset + 60, 18, 40, strcmp(current_pressed_note, "G5") == 0 ? ORANGE : WHITE);
+        // draw the A5 key
+        fillRect(x_offset + 240, y_offset, 8, 60, strcmp(current_pressed_note, "A5") == 0 ? ORANGE : WHITE);
+        fillRect(x_offset + 240, y_offset + 60, 18, 40, strcmp(current_pressed_note, "A5") == 0 ? ORANGE : WHITE);
 
         // print the black keys
         // draw the C#4 key
-        fillRect(x_offset + 10, y_offset, 10, 60, current_note == 'c' ? ORANGE : BLACK);
+        fillRect(x_offset + 10, y_offset, 10, 60, strcmp(current_pressed_note, "C#4") == 0 ? ORANGE : BLACK);
         // draw the D#4 key
-        fillRect(x_offset + 30, y_offset, 10, 60, current_note == 'd' ? ORANGE : BLACK);
+        fillRect(x_offset + 30, y_offset, 10, 60, strcmp(current_pressed_note, "D#4") == 0 ? ORANGE : BLACK);
         // draw the F#4 key
-        fillRect(x_offset + 70, y_offset, 10, 60, current_note == 'f' ? ORANGE : BLACK);
+        fillRect(x_offset + 70, y_offset, 10, 60, strcmp(current_pressed_note, "F#4") == 0 ? ORANGE : BLACK);
         // draw the G#4 key
-        fillRect(x_offset + 90, y_offset, 10, 60, current_note == 'g' ? ORANGE : BLACK);
+        fillRect(x_offset + 90, y_offset, 10, 60, strcmp(current_pressed_note, "G#4") == 0 ? ORANGE : BLACK);
         // draw the A#4 key
-        fillRect(x_offset + 110, y_offset, 10, 60, current_note == 'a' ? ORANGE : BLACK);
+        fillRect(x_offset + 110, y_offset, 10, 60, strcmp(current_pressed_note, "A#4") == 0 ? ORANGE : BLACK);
+        // draw the C#5 key
+        fillRect(x_offset + 150, y_offset, 10, 60, strcmp(current_pressed_note, "C#5") == 0 ? ORANGE : BLACK);
+        // draw the D#5 key
+        fillRect(x_offset + 170, y_offset, 10, 60, strcmp(current_pressed_note, "D#5") == 0 ? ORANGE : BLACK);
+        // draw the F#5 key
+        fillRect(x_offset + 210, y_offset, 10, 60, strcmp(current_pressed_note, "F#5") == 0 ? ORANGE : BLACK);
+        // draw the G#5 key
+        fillRect(x_offset + 230, y_offset, 10, 60, strcmp(current_pressed_note, "G#5") == 0 ? ORANGE : BLACK);
+        // draw the A#5 key
+        fillRect(x_offset + 250, y_offset, 10, 60, strcmp(current_pressed_note, "A#5") == 0 ? ORANGE : BLACK);
 
         spare_time = FRAME_RATE2 - (time_us_32() - begin_time);
         // yield for necessary amount of time
@@ -1068,10 +1122,12 @@ static PT_THREAD(thread_keypad_input(struct pt *pt))
                 if (possible == 7 && current_instrument == DRUMS)
                 {
                     playDrum(0); // 0 = kick
+                    send_note_to_vga(MSG_DRUMS_CHANGE, '0');
                 }
                 if (possible == 8 && current_instrument == DRUMS)
                 {
                     playDrum(1); // 1 = snare
+                    send_note_to_vga(MSG_DRUMS_CHANGE, '1');
                 }
                 if (possible == 9)
                 {
@@ -1079,6 +1135,7 @@ static PT_THREAD(thread_keypad_input(struct pt *pt))
                     {
                         // key signature is not valid for drums
                         playDrum(2); // 2 = hihat
+                        send_note_to_vga(MSG_DRUMS_CHANGE, '2');
                     }
                     else
                     {
