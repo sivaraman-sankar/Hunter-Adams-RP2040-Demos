@@ -753,13 +753,15 @@ void setupKeypad()
 
 int data_chan_A;
 int ctrl_chan_A;
-int data_chan_B;
-int ctrl_chan_B;
+int data_chan_B = 8;
+int ctrl_chan_B = 9;
 
 void playDrum(int drumIndex)
 {
     if (drumIndex < 0 || drumIndex >= NUM_DRUMS)
         return;
+
+    printf("\nPlaying drum %d\n", drumIndex);
 
     // Abort any previous transfer
     dma_channel_abort(data_chan_B);
@@ -879,8 +881,8 @@ static PT_THREAD(thread_pitch_bend(struct pt *pt))
 // Declare DMA channels directly
 #define DATA_CHAN_A 10
 #define CTRL_CHAN_A 11
-#define DATA_CHAN_B 10
-#define CTRL_CHAN_B 11
+#define DATA_CHAN_B 8
+#define CTRL_CHAN_B 9
 
 void setupDMA()
 {
@@ -917,6 +919,42 @@ void setupDMA()
         &spi_get_hw(SPI_PORT)->dr,
         tracks[currentTrack].data,
         tracks[currentTrack].length,
+        false);
+}
+
+void setupDrumsDMA()
+{
+    // Control channel B setup
+    dma_channel_config c_ctrl_B = dma_channel_get_default_config(ctrl_chan_B);
+    channel_config_set_transfer_data_size(&c_ctrl_B, DMA_SIZE_32);
+    channel_config_set_read_increment(&c_ctrl_B, false);
+    channel_config_set_write_increment(&c_ctrl_B, false);
+    channel_config_set_chain_to(&c_ctrl_B, data_chan_B);
+
+    dma_channel_configure(
+        ctrl_chan_B, &c_ctrl_B,
+        &dma_hw->ch[data_chan_B].read_addr,
+        (void *)&drums[0].data, // dummy default, will change when triggered
+        1, false);
+
+    // Data channel B setup
+    dma_channel_config c_data_B = dma_channel_get_default_config(data_chan_B);
+    channel_config_set_transfer_data_size(&c_data_B, DMA_SIZE_16);
+    channel_config_set_read_increment(&c_data_B, true);
+    channel_config_set_write_increment(&c_data_B, false);
+
+    // Set DMA Timer 0 for 22.05 kHz playback (250 MHz × 2 / 22673 = 22050 Hz)
+    dma_timer_set_fraction(0, 2, 22673);
+
+    // Use same DMA timer 0 (0x3B), same frequency
+    channel_config_set_dreq(&c_data_B, 0x3B);
+    channel_config_set_chain_to(&c_data_B, data_chan_B);
+
+    dma_channel_configure(
+        data_chan_B, &c_data_B,
+        &spi_get_hw(SPI_PORT)->dr,
+        drums[0].data,
+        drums[0].length,
         false);
 }
 
@@ -988,7 +1026,7 @@ static PT_THREAD(thread_keypad_input(struct pt *pt))
             (i = -1);
 
         // Print key to terminal
-        printf("\nKey pressed: %d", i);
+        // printf("\nKey pressed: %d", i);
 
         // Update active note
         if (i >= 1 && i <= 8)
@@ -998,15 +1036,6 @@ static PT_THREAD(thread_keypad_input(struct pt *pt))
             // convert to char ie. 1 to '1' , 2 to '2', etc.
             char active_key_text = '0' + (char)(active_note + 1);
             send_note_to_vga(MSG_NOTE_CHANGE, active_key_text);
-
-            // check if drums is played
-            if (current_instrument == DRUMS)
-            {
-                // play the drum
-                // playDrum(active_note);
-                // send note to VGA via multicore FIFO method
-                send_note_to_vga(MSG_DRUMS_CHANGE, active_key_text);
-            }
         }
         else
         {
@@ -1027,10 +1056,27 @@ static PT_THREAD(thread_keypad_input(struct pt *pt))
         case MAYBE_PRESSED:
             if (i == possible)
             {
+                //
+                if (possible == 7 && current_instrument == DRUMS)
+                {
+                    playDrum(0); // 0 = kick
+                }
+                if (possible == 8 && current_instrument == DRUMS)
+                {
+                    playDrum(1); // 1 = snare
+                }
                 if (possible == 9)
                 {
-                    // 9 Button -> change scale
-                    current_key = (current_key + 1) % NUM_KEYS;
+                    if (current_instrument == DRUMS)
+                    {
+                        // key signature is not valid for drums
+                        playDrum(2); // 2 = hihat
+                    }
+                    else
+                    {
+                        // 9 Button -> change scale
+                        current_key = (current_key + 1) % NUM_KEYS;
+                    }
                 }
                 if (possible == 10)
                 {
@@ -1195,7 +1241,8 @@ int main()
     // ========== DMA SETUP ================
     // =====================================
     setupDMA();
-    // Setup DMA for the DAC
+
+    setupDrumsDMA(); // Setup DMA for the Drums
     playback();
 
     setupADC0();
