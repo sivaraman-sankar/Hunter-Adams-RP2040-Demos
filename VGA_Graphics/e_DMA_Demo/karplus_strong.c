@@ -25,8 +25,7 @@ typedef signed int s15x16;
 #define int_to_s15x16(a) ((s15x16)((a) << 16))
 #define abss15x16(a) abs(a)
 
-// KS parameters
-#define n_note 12
+#define n_note 21
 #define max_string_size 200
 volatile int current_note;
 s15x16 string[max_string_size];
@@ -35,10 +34,19 @@ int ptrin, ptrout;
 int pluck_pos = 20, pluck_width = 10, output_pos = 15;
 int saw_length = 20;
 
-volatile int string_length[n_note] = {76, 72, 68, 64, 60, 57, 54, 51, 48, 45, 42, 40};
-volatile s15x16 eta[n_note] = {float_to_s15x16(0.3768), float_to_s15x16(0.739), float_to_s15x16(0.8237),
-                               float_to_s15x16(0.5528), float_to_s15x16(0.1908), float_to_s15x16(0.57), float_to_s15x16(0.8974),
-                               float_to_s15x16(0.96), float_to_s15x16(0.727), float_to_s15x16(0.375), float_to_s15x16(0.0526), float_to_s15x16(0.3387)};
+volatile int string_length[n_note] = {
+    76, 72, 68, 64, 60, 57, 54, 51, 48, 45, 42, 40,   // C4–B4
+    38, 36, 34, 32, 30, 28, 26, 24, 22              // C5–A5
+};
+volatile s15x16 eta[n_note] = {
+    float_to_s15x16(0.3768), float_to_s15x16(0.739), float_to_s15x16(0.8237),
+    float_to_s15x16(0.5528), float_to_s15x16(0.1908), float_to_s15x16(0.57),
+    float_to_s15x16(0.8974), float_to_s15x16(0.96), float_to_s15x16(0.727),
+    float_to_s15x16(0.375), float_to_s15x16(0.0526), float_to_s15x16(0.3387),
+    float_to_s15x16(0.315), float_to_s15x16(0.298), float_to_s15x16(0.282),
+    float_to_s15x16(0.267), float_to_s15x16(0.253), float_to_s15x16(0.239),
+    float_to_s15x16(0.226), float_to_s15x16(0.213), float_to_s15x16(0.201)
+};
 
 int current_pluck = 1;
 volatile s15x16 tuning_out, last_tune_out, last_tune_in;
@@ -65,32 +73,28 @@ volatile int note_start = true;
 
 int note_char_to_index(char *note)
 {
-    if (strcmp(note, "C4") == 0)
-        return 0;
-    else if (strcmp(note, "C4#") == 0)
-        return 1;
-    else if (strcmp(note, "D4") == 0)
-        return 2;
-    else if (strcmp(note, "D4#") == 0)
-        return 3;
-    else if (strcmp(note, "E4") == 0)
-        return 4;
-    else if (strcmp(note, "F4") == 0)
-        return 5;
-    else if (strcmp(note, "F4#") == 0)
-        return 6;
-    else if (strcmp(note, "G4") == 0)
-        return 7;
-    else if (strcmp(note, "G4#") == 0)
-        return 8;
-    else if (strcmp(note, "A4") == 0)
-        return 9;
-    else if (strcmp(note, "A4#") == 0)
-        return 10;
-    else if (strcmp(note, "B4") == 0)
-        return 11;
-    else
-        return 0; // Default/fallback
+    if (strcmp(note, "C4") == 0) return 0;
+    else if (strcmp(note, "C#4") == 0) return 1;
+    else if (strcmp(note, "D4") == 0) return 2;
+    else if (strcmp(note, "D#4") == 0) return 3;
+    else if (strcmp(note, "E4") == 0) return 4;
+    else if (strcmp(note, "F4") == 0) return 5;
+    else if (strcmp(note, "F#4") == 0) return 6;
+    else if (strcmp(note, "G4") == 0) return 7;
+    else if (strcmp(note, "G#4") == 0) return 8;
+    else if (strcmp(note, "A4") == 0) return 9;
+    else if (strcmp(note, "A#4") == 0) return 10;
+    else if (strcmp(note, "B4") == 0) return 11;
+    else if (strcmp(note, "C5") == 0) return 12;
+    else if (strcmp(note, "C#5") == 0) return 13;
+    else if (strcmp(note, "D5") == 0) return 14;
+    else if (strcmp(note, "D#5") == 0) return 15;
+    else if (strcmp(note, "E5") == 0) return 16;
+    else if (strcmp(note, "F5") == 0) return 17;
+    else if (strcmp(note, "F#5") == 0) return 18;
+    else if (strcmp(note, "G5") == 0) return 19;
+    else if (strcmp(note, "G#5") == 0) return 20;
+    else return 0;
 }
 
 int compute_sample(void)

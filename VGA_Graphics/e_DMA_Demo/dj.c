@@ -1045,6 +1045,11 @@ void setupDrumsDMA()
 
 void playback()
 {
+    if (current_playback_state == PAUSE)
+    {
+        // If paused, just return
+        return;
+    }
     // Start playback
     dma_channel_set_read_addr(ctrl_chan_A, (void *)&tracks[currentTrack].data, false);
     dma_channel_set_read_addr(data_chan_A, tracks[currentTrack].data, false);
