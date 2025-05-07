@@ -71,6 +71,7 @@
 
 // Shared state for decentralized state management
 #include "shared.h"
+#include "karplus_strong.h"
 
 /* ===== DEFINITIONS ===== */
 
@@ -100,7 +101,7 @@ typedef enum
 } PlaybackState;
 
 #define NUM_PLAYBACK_STATES 2
-volatile PlaybackState current_playback_state = PLAY; // Default to play
+volatile PlaybackState current_playback_state = PAUSE; // Default to play
 
 #define NUM_INSTRUMENTS 3
 volatile InstrumentState current_instrument = PIANO;
@@ -882,6 +883,7 @@ static void alarm_irq(void)
         DAC_data_0 = (DAC_config_chan_B | (DAC_output_0 & 0xffff));
         spi_write16_blocking(SPI_PORT, &DAC_data_0, 1);
     }
+
     else
     {
         // No key held, ramp down amplitude
@@ -908,6 +910,24 @@ static void alarm_irq(void)
 }
 
 /* ===== PITCH BENDING THREAD ===== */
+static PT_THREAD(thread_guitar(struct pt *pt))
+{
+    PT_BEGIN(pt);
+
+    while (1)
+    {
+        if (current_instrument == GUITAR && active_note >= 0 && active_note < 8)
+        {
+            // Set the phase increment for the guitar
+            char *current_pressed_note = get_current_pressed_note();
+            play_guitar_note(current_pressed_note);
+        }
+
+        PT_YIELD_usec(30000);
+    }
+
+    PT_END(pt);
+}
 
 static PT_THREAD(thread_pitch_bend(struct pt *pt))
 {
@@ -1102,6 +1122,8 @@ static PT_THREAD(thread_keypad_input(struct pt *pt))
         if (i >= 1 && i <= 8)
         {
             active_note = i - 1;
+
+            // printf("\nActive note: %d", active_note);
             // Send note to VGA via multicore FIFO method
             // convert to char ie. 1 to '1' , 2 to '2', etc.
             char active_key_text = '0' + (char)(active_note + 1);
@@ -1311,6 +1333,9 @@ int main()
     // Write the lower 32 bits of the target time to the alarm register, arming it.
     timer_hw->alarm[ALARM_NUM] = timer_hw->timerawl + DELAY;
 
+    // Guitar setup
+    init_karplus_strong();
+
     // =====================================
     // ========== DMA SETUP ================
     // =====================================
@@ -1325,6 +1350,7 @@ int main()
     // Add core 0 threads
     pt_add_thread(thread_keypad_input);
     pt_add_thread(thread_pitch_bend);
+    pt_add_thread(thread_guitar);
 
     // Start core 1
     multicore_reset_core1();
