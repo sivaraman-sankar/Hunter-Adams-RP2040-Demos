@@ -585,7 +585,7 @@ static PT_THREAD(protothread_vga_title(struct pt *pt))
     static uint32_t instructions_start_time = 0;
     static bool title_drawn = false;
     static bool instructions_hidden = false;
-    static const int offset = 45;
+    static const int offset = 60;
 
     static char *
         instructions[] = {
@@ -613,7 +613,7 @@ static PT_THREAD(protothread_vga_title(struct pt *pt))
         // Instructions visible for first 10 seconds
         if (!instructions_hidden)
         {
-            if ((time_us_32() - instructions_start_time) < 10000000)
+            if ((time_us_32() - instructions_start_time) < 30000000)
             {
                 setTextSize(1);
                 setTextColor2(PINK, BLACK);
