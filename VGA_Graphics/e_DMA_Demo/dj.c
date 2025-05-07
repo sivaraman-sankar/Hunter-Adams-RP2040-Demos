@@ -576,35 +576,73 @@ static PT_THREAD(protothread_vga_drums(struct pt *pt))
     PT_END(pt);
 } // animation thread
 
-// Animation on core 0
 static PT_THREAD(protothread_vga_title(struct pt *pt))
 {
-    // Mark beginning of thread
     PT_BEGIN(pt);
 
-    // Variables for maintaining frame rate
     static int begin_time;
     static int spare_time;
+    static uint32_t instructions_start_time = 0;
+    static bool title_drawn = false;
+    static bool instructions_hidden = false;
+    static const int offset = 45;
+
+    static char *
+        instructions[] = {
+            "Press keys 1-8 to play notes; drums 7-9",
+            "Press 0 to play/pause backing track",
+            "Press * to switch backing tracks and # to change instrument"};
+    static const int y_offsets[] = {50, 70, 90};
+    const int num_instructions = sizeof(instructions) / sizeof(instructions[0]);
 
     while (1)
     {
-        // Measure time at start of thread
         begin_time = time_us_32();
 
-        setCursor(X_DIMENSION / 2, 0);
-        setTextSize(2);
-        setTextColor2(WHITE, BLACK);
-        // print title
-        writeString("VGA Synth Pad v1.0");
-        // delay in accordance with frame rate
+        // Draw title once
+        if (!title_drawn)
+        {
+            setCursor((X_DIMENSION / 2) - offset, 5);
+            setTextSize(2);
+            setTextColor2(WHITE, BLACK);
+            writeString("VGA Synth Pad v1.0");
+            title_drawn = true;
+            instructions_start_time = begin_time;
+        }
+
+        // Instructions visible for first 10 seconds
+        if (!instructions_hidden)
+        {
+            if ((time_us_32() - instructions_start_time) < 10000000)
+            {
+                setTextSize(1);
+                setTextColor2(PINK, BLACK);
+                for (int i = 0; i < num_instructions; i++)
+                {
+                    setCursor((X_DIMENSION / 2) - offset, y_offsets[i]);
+                    writeString(instructions[i]);
+                }
+            }
+            else
+            {
+                // Clear instructions
+                setTextSize(1);
+                setTextColor2(BLACK, BLACK); // Draw black text on black background
+                for (int i = 0; i < num_instructions; i++)
+                {
+                    setCursor((X_DIMENSION / 2) - offset, y_offsets[i]);
+                    writeString(instructions[i]); // Overwrite with "black"
+                }
+                instructions_hidden = true;
+            }
+        }
 
         spare_time = FRAME_RATE - (time_us_32() - begin_time);
-        // yield for necessary amount of time
         PT_YIELD_usec(spare_time);
-        // NEVER exit while
-    } // END WHILE(1)
+    }
+
     PT_END(pt);
-} // animation thread
+}
 
 static PT_THREAD(protothread_vga_state(struct pt *pt))
 {
@@ -674,7 +712,7 @@ static PT_THREAD(protothread_track_state(struct pt *pt))
             cursor_position += 1;
         }
         setCursor(x_offset + cursor_position, y_offset);
-        drawRect(x_offset + cursor_position, y_offset, 3, 3, GREEN);
+        drawRect(x_offset + cursor_position, y_offset, 2, 2, PINK);
 
         if (cursor_position >= 160)
         {
