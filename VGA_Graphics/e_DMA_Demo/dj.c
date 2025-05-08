@@ -218,6 +218,7 @@ unsigned int keycodes[12] = {0x28, 0x11, 0x21, 0x41, 0x12,
 unsigned int scancodes[4] = {0x01, 0x02, 0x04, 0x08};
 unsigned int button = 0x70;
 volatile fix15 pitch_multiplier_fix15 = float2fix15(1.0); // Default: no pitch bend
+volatile int seek_position = 0;
 
 char keytext[40];
 int prev_key = 0;
@@ -238,7 +239,6 @@ int prev_key = 0;
 #define X_DIMENSION 640
 #define Y_DIMENSION 480
 
-int cursor_position = 0;
 char current_pressed_note[4] = "C4"; // Default to C4
 int current_pressed_drums = 0;       // Default to 0, ranges from [0,3]
 
@@ -420,7 +420,18 @@ static PT_THREAD(thread_poll_queue(struct pt *pt))
 // Animation on core 1
 // * Renders the keyboard on the screen
 // * Reacts to key presses via multicore FIFO method
-// static PT_THREAD(thread_pitch_bend(struct pt *pt))
+
+const char *white_keys[] = {
+    "C4", "D4", "E4", "F4", "G4", "A4", "B4",
+    "C5", "D5", "E5", "F5", "G5", "A5", "B5"};
+
+const struct
+{
+    const char *name;
+    int left_white_index; // index of the white key to the left
+} black_keys[] = {
+    {"C#4", 0}, {"D#4", 1}, {"F#4", 3}, {"G#4", 4}, {"A#4", 5}, 
+    {"C#5", 7}, {"D#5", 8}, {"F#5", 10}, {"G#5", 11}, {"A#5", 12}};
 
 static PT_THREAD(protothread_keys(struct pt *pt))
 {
@@ -438,11 +449,6 @@ static PT_THREAD(protothread_keys(struct pt *pt))
     {
         // Measure time at start of thread
         begin_time = time_us_32();
-
-        // need to print a octave of a standard keyboard starting at C4 at x_offset, y_offset
-        // print the white keys - note they are 20 pixels wide and 100 pixels tall
-        // however, the black keys are 10 pixels wide and 60 pixels tall and are right aligned with the white keys,
-        // hence the white has two parts to it, the top and the bottom, the top is 10 pixels wide and 60 pixels tall and the bottom is 20 pixels wide and 40 pixels tall
         char *current_pressed_note = get_current_pressed_note();
 
         if (current_instrument == DRUMS)
@@ -450,74 +456,37 @@ static PT_THREAD(protothread_keys(struct pt *pt))
             strcpy(current_pressed_note, "X");
         }
 
-        // draw the C4 key
-        fillRect(x_offset, y_offset, 8, 60, strcmp(current_pressed_note, "C4") == 0 ? ORANGE : WHITE);
-        fillRect(x_offset, y_offset + 60, 18, 40, strcmp(current_pressed_note, "C4") == 0 ? ORANGE : WHITE);
+        // Draw white keys
+        for (int i = 0; i < 14; i++)
+        {
+            const char *note = white_keys[i];
+            int x = x_offset + i * 21;
 
-        // draw the D4 key
-        fillRect(x_offset + 20, y_offset, 8, 60, strcmp(current_pressed_note, "D4") == 0 ? ORANGE : WHITE);
-        fillRect(x_offset + 20, y_offset + 60, 18, 40, strcmp(current_pressed_note, "D4") == 0 ? ORANGE : WHITE);
+            // Determine top alignment style
+            int top_x;
+            if (strcmp(note, "C4") == 0 || strcmp(note, "F4") == 0 ||
+                strcmp(note, "C5") == 0 || strcmp(note, "F5") == 0)
+            {
+                top_x = x; // No black key to its left
+            }
+            else
+            {
+                top_x = x + 5; // Black key to its left
+            }
 
-        // draw the E4 key
-        fillRect(x_offset + 40, y_offset, 18, 60, strcmp(current_pressed_note, "E4") == 0 ? ORANGE : WHITE);
-        fillRect(x_offset + 40, y_offset + 60, 18, 40, strcmp(current_pressed_note, "E4") == 0 ? ORANGE : WHITE);
+            uint16_t color = strcmp(current_pressed_note, note) == 0 ? ORANGE : WHITE;
+            fillRect(top_x, y_offset, 15, 60, color);  // top portion
+            fillRect(x, y_offset + 60, 20, 40, color); // bottom portion
+        }
 
-        // draw the F4 key
-        fillRect(x_offset + 60, y_offset, 8, 60, strcmp(current_pressed_note, "F4") == 0 ? ORANGE : WHITE);
-        fillRect(x_offset + 60, y_offset + 60, 18, 40, strcmp(current_pressed_note, "F4") == 0 ? ORANGE : WHITE);
-
-        // draw the G4 key
-        fillRect(x_offset + 80, y_offset, 18, 60, strcmp(current_pressed_note, "G4") == 0 ? ORANGE : WHITE);
-        fillRect(x_offset + 80, y_offset + 60, 18, 40, strcmp(current_pressed_note, "G4") == 0 ? ORANGE : WHITE);
-
-        // draw the A4 key
-        fillRect(x_offset + 100, y_offset, 8, 60, strcmp(current_pressed_note, "A4") == 0 ? ORANGE : WHITE);
-        fillRect(x_offset + 100, y_offset + 60, 18, 40, strcmp(current_pressed_note, "A4") == 0 ? ORANGE : WHITE);
-
-        // draw the B4 key
-        fillRect(x_offset + 120, y_offset, 18, 60, strcmp(current_pressed_note, "B4") == 0 ? ORANGE : WHITE);
-        fillRect(x_offset + 120, y_offset + 60, 18, 40, strcmp(current_pressed_note, "B4") == 0 ? ORANGE : WHITE);
-
-        // draw the C5 key
-        fillRect(x_offset + 140, y_offset, 8, 60, strcmp(current_pressed_note, "C5") == 0 ? ORANGE : WHITE);
-        fillRect(x_offset + 140, y_offset + 60, 18, 40, strcmp(current_pressed_note, "C5") == 0 ? ORANGE : WHITE);
-        // draw the D5 key
-        fillRect(x_offset + 160, y_offset, 8, 60, strcmp(current_pressed_note, "D5") == 0 ? ORANGE : WHITE);
-        fillRect(x_offset + 160, y_offset + 60, 18, 40, strcmp(current_pressed_note, "D5") == 0 ? ORANGE : WHITE);
-        // draw the E5 key
-        fillRect(x_offset + 180, y_offset, 18, 60, strcmp(current_pressed_note, "E5") == 0 ? ORANGE : WHITE);
-        fillRect(x_offset + 180, y_offset + 60, 18, 40, strcmp(current_pressed_note, "E5") == 0 ? ORANGE : WHITE);
-        // draw the F5 key
-        fillRect(x_offset + 200, y_offset, 8, 60, strcmp(current_pressed_note, "F5") == 0 ? ORANGE : WHITE);
-        fillRect(x_offset + 200, y_offset + 60, 18, 40, strcmp(current_pressed_note, "F5") == 0 ? ORANGE : WHITE);
-        // draw the G5 key
-        fillRect(x_offset + 220, y_offset, 18, 60, strcmp(current_pressed_note, "G5") == 0 ? ORANGE : WHITE);
-        fillRect(x_offset + 220, y_offset + 60, 18, 40, strcmp(current_pressed_note, "G5") == 0 ? ORANGE : WHITE);
-        // draw the A5 key
-        fillRect(x_offset + 240, y_offset, 8, 60, strcmp(current_pressed_note, "A5") == 0 ? ORANGE : WHITE);
-        fillRect(x_offset + 240, y_offset + 60, 18, 40, strcmp(current_pressed_note, "A5") == 0 ? ORANGE : WHITE);
-
-        // print the black keys
-        // draw the C#4 key
-        fillRect(x_offset + 10, y_offset, 10, 60, strcmp(current_pressed_note, "C#4") == 0 ? ORANGE : BLACK);
-        // draw the D#4 key
-        fillRect(x_offset + 30, y_offset, 10, 60, strcmp(current_pressed_note, "D#4") == 0 ? ORANGE : BLACK);
-        // draw the F#4 key
-        fillRect(x_offset + 70, y_offset, 10, 60, strcmp(current_pressed_note, "F#4") == 0 ? ORANGE : BLACK);
-        // draw the G#4 key
-        fillRect(x_offset + 90, y_offset, 10, 60, strcmp(current_pressed_note, "G#4") == 0 ? ORANGE : BLACK);
-        // draw the A#4 key
-        fillRect(x_offset + 110, y_offset, 10, 60, strcmp(current_pressed_note, "A#4") == 0 ? ORANGE : BLACK);
-        // draw the C#5 key
-        fillRect(x_offset + 150, y_offset, 10, 60, strcmp(current_pressed_note, "C#5") == 0 ? ORANGE : BLACK);
-        // draw the D#5 key
-        fillRect(x_offset + 170, y_offset, 10, 60, strcmp(current_pressed_note, "D#5") == 0 ? ORANGE : BLACK);
-        // draw the F#5 key
-        fillRect(x_offset + 210, y_offset, 10, 60, strcmp(current_pressed_note, "F#5") == 0 ? ORANGE : BLACK);
-        // draw the G#5 key
-        fillRect(x_offset + 230, y_offset, 10, 60, strcmp(current_pressed_note, "G#5") == 0 ? ORANGE : BLACK);
-        // draw the A#5 key
-        fillRect(x_offset + 250, y_offset, 10, 60, strcmp(current_pressed_note, "A#5") == 0 ? ORANGE : BLACK);
+        // Draw black keys
+        for (int i = 0; i < 10; i++)
+        {
+            int left_white_x = x_offset + black_keys[i].left_white_index * 21;
+            int black_x = left_white_x + 15; // centered between white keys
+            uint16_t color = strcmp(current_pressed_note, black_keys[i].name) == 0 ? ORANGE : BLACK;
+            fillRect(black_x, y_offset, 11, 60, color);
+        }
 
         spare_time = FRAME_RATE2 - (time_us_32() - begin_time);
         // yield for necessary amount of time
@@ -585,14 +554,16 @@ static PT_THREAD(protothread_vga_title(struct pt *pt))
     static uint32_t instructions_start_time = 0;
     static bool title_drawn = false;
     static bool instructions_hidden = false;
-    static const int offset = 60;
+    static const int offset = 140;
 
     static char *
         instructions[] = {
-            "Press keys 1-8 to play notes; drums 7-9",
-            "Press 0 to play/pause backing track",
-            "Press * to switch backing tracks and # to change instrument"};
-    static const int y_offsets[] = {50, 70, 90};
+            "Press * to switch backing tracks and # to change instrument.",
+            "In piano or guitar mode, press keys 1-8 to play notes, or press 9 to change key signatures.",
+            "Use the knob to bend piano notes, and press keys 7-9 to play drums.",
+            "Press 0 to pause or play the backing track.",
+            "NOW GO MAKE SOME MUSIC AND HAVE FUN!"};
+    static const int y_istructions_start = 50;
     const int num_instructions = sizeof(instructions) / sizeof(instructions[0]);
 
     while (1)
@@ -603,9 +574,9 @@ static PT_THREAD(protothread_vga_title(struct pt *pt))
         if (!title_drawn)
         {
             setCursor((X_DIMENSION / 2) - offset, 5);
-            setTextSize(2);
+            setTextSize(4);
             setTextColor2(WHITE, BLACK);
-            writeString("VGA Synth Pad v1.0");
+            writeString("DJ Synth Pad");
             title_drawn = true;
             instructions_start_time = begin_time;
         }
@@ -613,28 +584,52 @@ static PT_THREAD(protothread_vga_title(struct pt *pt))
         // Instructions visible for first 10 seconds
         if (!instructions_hidden)
         {
-            if ((time_us_32() - instructions_start_time) < 30000000)
+            setTextSize(1);
+            setTextColor2(PINK, BLACK);
+            int center_offset = 0;
+            int title_start = X_DIMENSION / 2 - offset;
+            for (int i = 0; i < num_instructions; i++)
             {
-                setTextSize(1);
-                setTextColor2(PINK, BLACK);
-                for (int i = 0; i < num_instructions; i++)
+                int y_pos = y_istructions_start + (20 * i);
+
+                switch (i)
                 {
-                    setCursor((X_DIMENSION / 2) - offset, y_offsets[i]);
-                    writeString(instructions[i]);
+                case 0:
+                    center_offset = -35;
+                    break;
+                case 1:
+                    center_offset = -130;
+                    break;
+                case 2:
+                    center_offset = -55;
+                    break;
+                case 3:
+                    center_offset = 15;
+                    break;
+                case 4:
+                    center_offset = 37;
+                    setTextColor2(GREEN, BLACK);
+                    break;
+                default:
+                    center_offset = 0;
+                    break;
                 }
+                setCursor(title_start + center_offset, y_pos);
+                writeString(instructions[i]);
             }
-            else
-            {
-                // Clear instructions
-                setTextSize(1);
-                setTextColor2(BLACK, BLACK); // Draw black text on black background
-                for (int i = 0; i < num_instructions; i++)
-                {
-                    setCursor((X_DIMENSION / 2) - offset, y_offsets[i]);
-                    writeString(instructions[i]); // Overwrite with "black"
-                }
-                instructions_hidden = true;
-            }
+            // }
+            // else
+            // {
+            //     // Clear instructions
+            //     setTextSize(1);
+            //     setTextColor2(BLACK, BLACK); // Draw black text on black background
+            //     for (int i = 0; i < num_instructions; i++)
+            //     {
+            //         setCursor((X_DIMENSION / 2) - offset, y_offsets[i]);
+            //         writeString(instructions[i]); // Overwrite with "black"
+            //     }
+            //     instructions_hidden = true;
+            // }
         }
 
         spare_time = FRAME_RATE - (time_us_32() - begin_time);
@@ -704,19 +699,23 @@ static PT_THREAD(protothread_track_state(struct pt *pt))
         setCursor(x_offset, y_offset);
         drawHLine(x_offset, y_offset, 160, WHITE);
 
-        setCursor(x_offset + cursor_position, y_offset);
-        drawRect(x_offset + cursor_position, y_offset, 2, 2, BLACK);
+        setCursor(x_offset + seek_position, y_offset);
+        drawRect(x_offset + seek_position, y_offset, 2, 2, BLACK);
 
         if (current_playback_state == PLAY)
         {
-            cursor_position += 1;
+            seek_position += 1;
         }
-        setCursor(x_offset + cursor_position, y_offset);
-        drawRect(x_offset + cursor_position, y_offset, 2, 2, PINK);
-
-        if (cursor_position >= 160)
+        else
         {
-            cursor_position = 0;
+            seek_position = 0;
+        }
+        setCursor(x_offset + seek_position, y_offset);
+        drawRect(x_offset + seek_position, y_offset, 2, 2, PINK);
+
+        if (seek_position >= 160)
+        {
+            seek_position = 0;
         }
 
         // print play, pause, next, previous
@@ -1222,7 +1221,10 @@ static PT_THREAD(thread_keypad_input(struct pt *pt))
                     stopPlayback();
                     setupDMA();
                     if (current_playback_state == PLAY)
+                    {
                         playback();
+                        seek_position = 0;
+                    }
                 }
                 if (possible == 11)
                 {
