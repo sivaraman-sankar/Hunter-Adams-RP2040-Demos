@@ -30,16 +30,19 @@
     - GPIO 14 <---> Pin 6 (Column 2 - Brown)
     - GPIO 15 <---> Pin 7 (Column 3 - Green)
 
-    ADC Connections (NEED TO FIX ON BREADBOARD):
+    ADC Connections:
     - GPIO 26 (ADC 0) <---> Left Potentiometer (0 - 3.3V, White)
     - GPIO 27 (ADC 1) <---> Right Potentiometer (0 - 3.3V, White)
-    - GPIO 28 (ADC 2) <---> PROTECTION? <---> Kick Pedal (0 - ?? V)
 
     Serial Connections:
     - GPIO 0 <---> UART RX (Yellow)
     - GPIO 1 <---> UART TX (Orange)
     - RP2040 GND <---> UART GND (Black)
 */
+
+/* ********************************************************************* */
+/*                          INITIALIZATION                               */
+/* ********************************************************************* */
 
 /* ===== IMPORTS ===== */
 
@@ -69,7 +72,6 @@
 #include "snare.c"
 #include "hihat.c"
 
-// Shared state for decentralized state management
 #include "shared.h"
 #include "karplus_strong.h"
 
@@ -97,11 +99,11 @@ typedef enum
 typedef enum
 {
     PLAY,
-    PAUSE
+    STOPPED
 } PlaybackState;
 
 #define NUM_PLAYBACK_STATES 2
-volatile PlaybackState current_playback_state = PAUSE; // Default to play
+volatile PlaybackState current_playback_state = STOPPED; // Default to stopped
 
 #define NUM_INSTRUMENTS 3
 volatile InstrumentState current_instrument = PIANO;
@@ -109,15 +111,6 @@ char *instrument_names[3] = {"Piano", "Guitar", "Drums"};
 
 #define NUM_TRACKS 2
 int currentTrack = 0;
-
-typedef enum
-{
-    BACKING_NONE,
-    BACKING_DRUMS,
-    BACKING_JAZZY
-} BackingTrackState;
-#define NUM_BACKING_TRACKS 3
-volatile BackingTrackState backingState = BACKING_JAZZY; // !!! Default to jazzy
 
 // Low-level alarm infrastructure we'll be using
 #define ALARM_NUM 0
@@ -139,8 +132,7 @@ typedef signed int fix15;
 #define Fs 50000
 #define DELAY 20 // 1/Fs (in microseconds)
 
-// the DDS units - core 0
-// Phase accumulator and phase increment. Increment sets output frequency.
+// Phase accumulator and phase increment, increment sets output frequency
 volatile unsigned int phase_accum_main_0;
 volatile unsigned int phase_incr_main_0 = (400.0 * two32) / Fs;
 
@@ -154,6 +146,17 @@ float major_freqs[3][8] = {
 volatile int current_note_index = -1;
 volatile int active_note = -1;
 int active_key_text = 0;
+
+const char *white_keys[] = {
+    "C4", "D4", "E4", "F4", "G4", "A4", "B4",
+    "C5", "D5", "E5", "F5", "G5", "A5", "B5"};
+
+const struct
+{
+    const char *name;
+    int left_white_index; // index of the white key to the left
+} black_keys[] = {
+    {"C#4", 0}, {"D#4", 1}, {"F#4", 3}, {"G#4", 4}, {"A#4", 5}, {"C#5", 7}, {"D#5", 8}, {"F#5", 10}, {"G#5", 11}, {"A#5", 12}};
 
 #define sine_table_size 256
 fix15 sin_table[sine_table_size];
@@ -230,7 +233,12 @@ int prev_key = 0;
 #define DAC_config_chan_A 0b0011000000000000
 #define DAC_config_chan_B 0b1011000000000000
 
-// ============================ VGA SETUP ============================
+// Declare DMA channels directly
+#define DATA_CHAN_A 10
+#define CTRL_CHAN_A 11
+#define DATA_CHAN_B 8
+#define CTRL_CHAN_B 9
+
 // uS per frame
 #define FRAME_RATE 33000
 #define FRAME_RATE2 66000
@@ -241,6 +249,38 @@ int prev_key = 0;
 
 char current_pressed_note[4] = "C4"; // Default to C4
 int current_pressed_drums = 0;       // Default to 0, ranges from [0,3]
+
+// Backing track struct
+typedef struct
+{
+    const unsigned short *data;
+    const unsigned int length;
+} AudioTrack;
+
+AudioTrack tracks[] = {
+    {backing_drums1, backing_drums1_len},
+    {backing_jazzy, backing_jazzy_len},
+    // Add more here
+};
+
+typedef struct
+{
+    const unsigned short *data;
+    const unsigned int length;
+} DrumSample;
+
+DrumSample drums[] = {
+    {kick, kick_len},
+    {snare, snare_len},
+    {hihat, hihat_len}};
+
+#define NUM_DRUMS (sizeof(drums) / sizeof(drums[0]))
+
+/* ********************************************************************* */
+/*                         HELPER FUNCTIONS                              */
+/* ********************************************************************* */
+
+/* ===== VGA STATE HELPERS ===== */
 
 void set_current_instrument(uint8_t instrument)
 {
@@ -256,11 +296,6 @@ void set_current_instrument(uint8_t instrument)
 
 void set_current_pressed_note(int note)
 {
-    // pentatonic scale corresponding to the key signature
-    // C Major: C4, D4, E4, G4, A4
-    // A Major: A4, B4, C#5, E5, F#5
-    // G Major: G4, A4, B4, D5, E5
-
     switch (current_key)
     {
     case 0:
@@ -319,7 +354,7 @@ void set_current_pressed_note(int note)
         case 7:
             strcpy(current_pressed_note, "G#5");
             break;
-        case 8: // A5 is mapped to 'x' ; not played
+        case 8:
             strcpy(current_pressed_note, "A5");
             break;
         }
@@ -351,7 +386,7 @@ void set_current_pressed_note(int note)
         case 7:
             strcpy(current_pressed_note, "F#5");
             break;
-        case 8: // G5 is mapped to 'x' ; not played
+        case 8:
             strcpy(current_pressed_note, "G5");
             break;
         }
@@ -366,7 +401,6 @@ char *get_current_pressed_note()
     return current_pressed_note;
 }
 
-// Non-blocking, one-step version of poll_queue
 void poll_queue_step()
 {
     if (multicore_fifo_rvalid())
@@ -402,414 +436,6 @@ void poll_queue_step()
     }
 }
 
-// Protothread to run poll_queue continuously
-static PT_THREAD(thread_poll_queue(struct pt *pt))
-{
-    PT_BEGIN(pt);
-    while (1)
-    {
-        poll_queue_step();
-        PT_YIELD(pt);
-    }
-    PT_END(pt);
-}
-
-// ==================================================
-// users serial input thread
-// ==================================================
-// Animation on core 1
-// * Renders the keyboard on the screen
-// * Reacts to key presses via multicore FIFO method
-
-const char *white_keys[] = {
-    "C4", "D4", "E4", "F4", "G4", "A4", "B4",
-    "C5", "D5", "E5", "F5", "G5", "A5", "B5"};
-
-const struct
-{
-    const char *name;
-    int left_white_index; // index of the white key to the left
-} black_keys[] = {
-    {"C#4", 0}, {"D#4", 1}, {"F#4", 3}, {"G#4", 4}, {"A#4", 5}, 
-    {"C#5", 7}, {"D#5", 8}, {"F#5", 10}, {"G#5", 11}, {"A#5", 12}};
-
-static PT_THREAD(protothread_keys(struct pt *pt))
-{
-    // Mark beginning of thread
-    PT_BEGIN(pt);
-
-    // Variables for maintaining frame rate
-    static int begin_time;
-    static int spare_time;
-
-    int x_offset = 6 * (X_DIMENSION / 10) - 40;
-    int y_offset = 2 * (Y_DIMENSION / 5) - 40;
-
-    while (1)
-    {
-        // Measure time at start of thread
-        begin_time = time_us_32();
-        char *current_pressed_note = get_current_pressed_note();
-
-        if (current_instrument == DRUMS)
-        {
-            strcpy(current_pressed_note, "X");
-        }
-
-        // Draw white keys
-        for (int i = 0; i < 14; i++)
-        {
-            const char *note = white_keys[i];
-            int x = x_offset + i * 21;
-
-            // Determine top alignment style
-            int top_x;
-            if (strcmp(note, "C4") == 0 || strcmp(note, "F4") == 0 ||
-                strcmp(note, "C5") == 0 || strcmp(note, "F5") == 0)
-            {
-                top_x = x; // No black key to its left
-            }
-            else
-            {
-                top_x = x + 5; // Black key to its left
-            }
-
-            uint16_t color = strcmp(current_pressed_note, note) == 0 ? ORANGE : WHITE;
-            fillRect(top_x, y_offset, 15, 60, color);  // top portion
-            fillRect(x, y_offset + 60, 20, 40, color); // bottom portion
-        }
-
-        // Draw black keys
-        for (int i = 0; i < 10; i++)
-        {
-            int left_white_x = x_offset + black_keys[i].left_white_index * 21;
-            int black_x = left_white_x + 15; // centered between white keys
-            uint16_t color = strcmp(current_pressed_note, black_keys[i].name) == 0 ? ORANGE : BLACK;
-            fillRect(black_x, y_offset, 11, 60, color);
-        }
-
-        spare_time = FRAME_RATE2 - (time_us_32() - begin_time);
-        // yield for necessary amount of time
-        PT_YIELD_usec(spare_time);
-        // NEVER exit while
-    } // END WHILE(1)
-    PT_END(pt);
-} // animation thread
-
-static PT_THREAD(protothread_vga_drums(struct pt *pt))
-{
-    // Mark beginning of thread
-    PT_BEGIN(pt);
-
-    // Variables for maintaining frame rate
-    static int begin_time;
-    static int spare_time;
-
-    // x,y offsets for the drums positions
-    int x_offset = 2 * (X_DIMENSION / 10) - 40;
-    int y_offset = 2 * (Y_DIMENSION / 5) - 40;
-    int drum_size = 50;
-
-    while (1)
-    {
-        // Measure time at start of thread
-        begin_time = time_us_32();
-
-        // if current_instrument is drums, then draw a arena around the 2X2 drum set
-        // else erase the arena
-        // print 2X2 drum set
-        setCursor(x_offset, y_offset);
-
-        // erase the drum set 1
-        // fillRect(x_offset, y_offset, drum_size, drum_size, BLACK);
-        // draw the drum set 1
-        fillRect(x_offset, y_offset, drum_size, drum_size, current_pressed_drums == 0 ? WHITE : RED);
-
-        // erase the drum set 2
-        // fillRect(x_offset + drum_size + 2, y_offset, drum_size, drum_size, BLACK);
-        // draw the drum set 2
-        fillRect(x_offset + drum_size + 2, y_offset, drum_size, drum_size, current_pressed_drums == 1 ? WHITE : BLUE);
-
-        // draw the drum set 3
-        fillRect(x_offset, y_offset + drum_size + 2, drum_size, drum_size, current_pressed_drums == 2 ? BLACK : GREEN);
-        // draw the drum set 4
-        fillRect(x_offset + drum_size + 2, y_offset + drum_size + 2, drum_size, drum_size, current_pressed_drums == 3 ? BLACK : YELLOW);
-
-        // reset the drum state to -1
-        current_pressed_drums = -1;
-        spare_time = FRAME_RATE - (time_us_32() - begin_time);
-        // yield for necessary amount of time
-        PT_YIELD_usec(spare_time);
-        // NEVER exit while
-    } // END WHILE(1)
-    PT_END(pt);
-} // animation thread
-
-static PT_THREAD(protothread_vga_title(struct pt *pt))
-{
-    PT_BEGIN(pt);
-
-    static int begin_time;
-    static int spare_time;
-    static uint32_t instructions_start_time = 0;
-    static bool title_drawn = false;
-    static bool instructions_hidden = false;
-    static const int offset = 140;
-
-    static char *
-        instructions[] = {
-            "Press * to switch backing tracks and # to change instrument.",
-            "In piano or guitar mode, press keys 1-8 to play notes, or press 9 to change key signatures.",
-            "Use the knob to bend piano notes, and press keys 7-9 to play drums.",
-            "Press 0 to pause or play the backing track.",
-            "NOW GO MAKE SOME MUSIC AND HAVE FUN!"};
-    static const int y_istructions_start = 50;
-    const int num_instructions = sizeof(instructions) / sizeof(instructions[0]);
-
-    while (1)
-    {
-        begin_time = time_us_32();
-
-        // Draw title once
-        if (!title_drawn)
-        {
-            setCursor((X_DIMENSION / 2) - offset, 5);
-            setTextSize(4);
-            setTextColor2(WHITE, BLACK);
-            writeString("DJ Synth Pad");
-            title_drawn = true;
-            instructions_start_time = begin_time;
-        }
-
-        // Instructions visible for first 10 seconds
-        if (!instructions_hidden)
-        {
-            setTextSize(1);
-            setTextColor2(PINK, BLACK);
-            int center_offset = 0;
-            int title_start = X_DIMENSION / 2 - offset;
-            for (int i = 0; i < num_instructions; i++)
-            {
-                int y_pos = y_istructions_start + (20 * i);
-
-                switch (i)
-                {
-                case 0:
-                    center_offset = -35;
-                    break;
-                case 1:
-                    center_offset = -130;
-                    break;
-                case 2:
-                    center_offset = -55;
-                    break;
-                case 3:
-                    center_offset = 15;
-                    break;
-                case 4:
-                    center_offset = 37;
-                    setTextColor2(GREEN, BLACK);
-                    break;
-                default:
-                    center_offset = 0;
-                    break;
-                }
-                setCursor(title_start + center_offset, y_pos);
-                writeString(instructions[i]);
-            }
-            // }
-            // else
-            // {
-            //     // Clear instructions
-            //     setTextSize(1);
-            //     setTextColor2(BLACK, BLACK); // Draw black text on black background
-            //     for (int i = 0; i < num_instructions; i++)
-            //     {
-            //         setCursor((X_DIMENSION / 2) - offset, y_offsets[i]);
-            //         writeString(instructions[i]); // Overwrite with "black"
-            //     }
-            //     instructions_hidden = true;
-            // }
-        }
-
-        spare_time = FRAME_RATE - (time_us_32() - begin_time);
-        PT_YIELD_usec(spare_time);
-    }
-
-    PT_END(pt);
-}
-
-static PT_THREAD(protothread_vga_state(struct pt *pt))
-{
-    // Mark beginning of thread
-    PT_BEGIN(pt);
-
-    // Variables for maintaining frame rate
-    static int begin_time;
-    static int spare_time;
-    char screentext[40];
-
-    while (1)
-    {
-        // Measure time at start of thread
-        begin_time = time_us_32();
-        int x_offset = X_DIMENSION / 10;
-        int y_offset = 4 * (Y_DIMENSION / 5);
-
-        // print key signature
-        setCursor(x_offset, y_offset);
-        setTextSize(1);
-        setTextColor2(GREEN, BLACK);
-        sprintf(screentext, "Key Signature: %s      ", key_names[current_key]);
-        writeString(screentext);
-
-        // print instrument
-        setCursor(x_offset, y_offset + 20);
-        setTextSize(1);
-        setTextColor2(GREEN, BLACK);
-        sprintf(screentext, "Instrument: %s      ", instrument_names[current_instrument]);
-        writeString(screentext);
-
-        spare_time = FRAME_RATE - (time_us_32() - begin_time);
-        // yield for necessary amount of time
-        PT_YIELD_usec(spare_time);
-        // NEVER exit while
-    } // END WHILE(1)
-    PT_END(pt);
-} // animation thread
-
-static PT_THREAD(protothread_track_state(struct pt *pt))
-{
-    // Mark beginning of thread
-    PT_BEGIN(pt);
-
-    // Variables for maintaining frame rate
-    static int begin_time;
-    static int spare_time;
-    int x_offset = 8 * (X_DIMENSION / 10) - 40;
-    int y_offset = 4 * (Y_DIMENSION / 5);
-    char screentext[40];
-
-    while (1)
-    {
-        // Measure time at start of thread
-        begin_time = time_us_32();
-
-        // print seek line with position of the cursor
-        setCursor(x_offset, y_offset);
-        drawHLine(x_offset, y_offset, 160, WHITE);
-
-        setCursor(x_offset + seek_position, y_offset);
-        drawRect(x_offset + seek_position, y_offset, 2, 2, BLACK);
-
-        if (current_playback_state == PLAY)
-        {
-            seek_position += 1;
-        }
-        else
-        {
-            seek_position = 0;
-        }
-        setCursor(x_offset + seek_position, y_offset);
-        drawRect(x_offset + seek_position, y_offset, 2, 2, PINK);
-
-        if (seek_position >= 160)
-        {
-            seek_position = 0;
-        }
-
-        // print play, pause, next, previous
-        setCursor(x_offset, y_offset + 20);
-        setTextSize(1);
-        setTextColor2(GREEN, BLACK);
-
-        // print play/pause
-        if (current_playback_state == PLAY)
-        {
-            writeString("<<       Playing...     >>");
-        }
-        else
-        {
-            writeString("<<       Paused         >>");
-        }
-
-        // print backing track name
-        setCursor(x_offset, y_offset + 40);
-        setTextSize(1);
-        setTextColor2(GREEN, BLACK);
-
-        // string to hold the track name, "Drums" or "Jazzy"
-        char track_name[20];
-        if (currentTrack == 0)
-        {
-            strcpy(track_name, "Drums");
-        }
-        else if (currentTrack == 1)
-        {
-            strcpy(track_name, "Jazzy");
-        }
-        else
-        {
-            strcpy(track_name, "Unknown");
-        }
-
-        sprintf(screentext, "Backing Track: %s      ", track_name);
-        writeString(screentext);
-
-        spare_time = FRAME_RATE - (time_us_32() - begin_time);
-        // yield for necessary amount of time
-        PT_YIELD_usec(spare_time);
-        // NEVER exit while
-    } // END WHILE(1)
-    PT_END(pt);
-} // animation thread
-
-// ==================================================
-// ==== core1 entry point =========================
-// ==================================================
-
-void core1_main()
-{
-    // add threads
-    pt_add_thread(thread_poll_queue); // poll queue thread
-    pt_add_thread(protothread_vga_title);
-    pt_add_thread(protothread_vga_state);
-    pt_add_thread(protothread_track_state);
-    pt_add_thread(protothread_vga_drums);
-    pt_add_thread(protothread_keys);
-    // Start the scheduler
-    pt_schedule_start;
-}
-
-// ============================ END of VGA SETUP =====================
-
-// Backing track struct
-typedef struct
-{
-    const unsigned short *data;
-    const unsigned int length;
-} AudioTrack;
-
-AudioTrack tracks[] = {
-    {backing_drums1, backing_drums1_len},
-    {backing_jazzy, backing_jazzy_len},
-    // Add more here
-};
-
-typedef struct
-{
-    const unsigned short *data;
-    const unsigned int length;
-} DrumSample;
-
-DrumSample drums[] = {
-    {kick, kick_len},
-    {snare, snare_len},
-    {hihat, hihat_len}};
-
-#define NUM_DRUMS (sizeof(drums) / sizeof(drums[0]))
-
-/* ===== SETUP FUNCTIONS ===== */
 void send_note_to_vga(MessageType type, char payload)
 {
     StateMessage msg;
@@ -818,6 +444,8 @@ void send_note_to_vga(MessageType type, char payload)
     multicore_fifo_push_blocking(*(uint32_t *)&msg); // Bitcast struct as 32-bit
     return;
 }
+
+/* ===== ADC HELPERS ===== */
 
 void setupADC0()
 {
@@ -840,6 +468,8 @@ void setupADC2()
     adc_select_input(ADC2_CHAN);
 }
 
+/* ===== KEYPAD HELPER ===== */
+
 void setupKeypad()
 {
     // Initialize the keypad GPIO's
@@ -854,39 +484,8 @@ void setupKeypad()
     gpio_pull_down((BASE_KEYPAD_PIN + 6));
 }
 
-int data_chan_A;
-int ctrl_chan_A;
-int data_chan_B = 8;
-int ctrl_chan_B = 9;
-
-void playDrum(int drumIndex)
-{
-    if (drumIndex < 0 || drumIndex >= NUM_DRUMS)
-        return;
-
-    printf("\nPlaying drum %d\n", drumIndex);
-
-    // Abort any previous transfer
-    dma_channel_abort(data_chan_B);
-    dma_channel_abort(ctrl_chan_B);
-
-    // Clear any pending interrupt flags (optional but clean)
-    dma_channel_acknowledge_irq0(data_chan_B);
-    dma_channel_acknowledge_irq0(ctrl_chan_B);
-
-    // Setup new transfer
-    dma_channel_set_read_addr(ctrl_chan_B, &drums[drumIndex].data, false);
-    dma_channel_set_trans_count(ctrl_chan_B, 1, false);
-    dma_channel_set_read_addr(data_chan_B, drums[drumIndex].data, false);
-    dma_channel_set_trans_count(data_chan_B, drums[drumIndex].length, false);
-
-    // Start playback
-    dma_start_channel_mask((1u << ctrl_chan_B));
-}
-
 /* ===== TIMER ISR FOR PIANO PLAYING ===== */
 
-// This timer ISR is called on core 0
 static void alarm_irq(void)
 {
 
@@ -940,92 +539,29 @@ static void alarm_irq(void)
         }
     }
 
-    // Removed legacy STATE_0 and BEEP_REPEAT_INTERVAL logic; frequency update handled above.
-
     // De-assert the GPIO when we leave the interrupt
     gpio_put(ISR_GPIO, 0);
 }
 
-/* ===== PITCH BENDING THREAD ===== */
-static PT_THREAD(thread_guitar(struct pt *pt))
+/* ===== DMA HELPERS ===== */
+
+void setupBackingTrackDMA()
 {
-    PT_BEGIN(pt);
+    // Backing Track DMA Setup (Left Speaker, DAC Channel A)
 
-    while (1)
-    {
-        if (current_instrument == GUITAR && active_note >= 0 && active_note < 8)
-        {
-            // Set the phase increment for the guitar
-            char *current_pressed_note = get_current_pressed_note();
-            play_guitar_note(current_pressed_note);
-        }
-
-        PT_YIELD_usec(30000);
-    }
-
-    PT_END(pt);
-}
-
-static PT_THREAD(thread_pitch_bend(struct pt *pt))
-{
-    PT_BEGIN(pt);
-
-    static uint16_t adc_raw;
-    static fix15 new_fix_mult;
-    static fix15 last_fix_mult = float2fix15(1.0); // Default to no bend
-
-    while (1)
-    {
-        // Read the potentiometer on ADC0
-        adc_select_input(ADC0_CHAN);
-        adc_raw = adc_read();
-
-        // Precompute the scale in fixed-point
-        fix15 adc_frac_fix15 = divfix(int2fix15(adc_raw), int2fix15(4095)); // adc_raw / 4095
-        new_fix_mult = FIX15_MIN_PITCH + multfix15(adc_frac_fix15, FIX15_RANGE_PITCH);
-
-        // Filter potentiometer noise
-        if (absfix15(new_fix_mult - last_fix_mult) >= BEND_THRESHOLD)
-        {
-            pitch_multiplier_fix15 = new_fix_mult;
-            // printf("\nPitch Multiplier: %f\n", fix2float15(pitch_multiplier_fix15));
-            // adc raw
-            // printf("ADC Raw: %d\n", adc_raw);
-            last_fix_mult = new_fix_mult;
-        }
-
-        PT_YIELD_usec(30000);
-    }
-
-    PT_END(pt);
-}
-
-// Declare DMA channels directly
-#define DATA_CHAN_A 10
-#define CTRL_CHAN_A 11
-#define DATA_CHAN_B 8
-#define CTRL_CHAN_B 9
-
-void setupDMA()
-{
-    // Initialy play the current_track
-    /* ===== Backing Track DMA Setup (Left Speaker, DAC Channel A) ===== */
-    data_chan_A = DATA_CHAN_A;
-    ctrl_chan_A = CTRL_CHAN_A;
-
-    dma_channel_config c_ctrl_A = dma_channel_get_default_config(ctrl_chan_A);
+    dma_channel_config c_ctrl_A = dma_channel_get_default_config(CTRL_CHAN_A);
     channel_config_set_transfer_data_size(&c_ctrl_A, DMA_SIZE_32);
     channel_config_set_read_increment(&c_ctrl_A, false);
     channel_config_set_write_increment(&c_ctrl_A, false);
-    channel_config_set_chain_to(&c_ctrl_A, data_chan_A);
+    channel_config_set_chain_to(&c_ctrl_A, DATA_CHAN_A);
 
     dma_channel_configure(
-        ctrl_chan_A, &c_ctrl_A,
-        &dma_hw->ch[data_chan_A].read_addr,
+        CTRL_CHAN_A, &c_ctrl_A,
+        &dma_hw->ch[DATA_CHAN_A].read_addr,
         (void *)&tracks[currentTrack].data,
         1, false);
 
-    dma_channel_config c_data_A = dma_channel_get_default_config(data_chan_A);
+    dma_channel_config c_data_A = dma_channel_get_default_config(DATA_CHAN_A);
     channel_config_set_transfer_data_size(&c_data_A, DMA_SIZE_16);
     channel_config_set_read_increment(&c_data_A, true);
     channel_config_set_write_increment(&c_data_A, false);
@@ -1034,33 +570,56 @@ void setupDMA()
     dma_timer_set_fraction(0, 2, 22673);
 
     channel_config_set_dreq(&c_data_A, 0x3B);
-    channel_config_set_chain_to(&c_data_A, ctrl_chan_A);
+    channel_config_set_chain_to(&c_data_A, CTRL_CHAN_A);
 
     dma_channel_configure(
-        data_chan_A, &c_data_A,
+        DATA_CHAN_A, &c_data_A,
         &spi_get_hw(SPI_PORT)->dr,
         tracks[currentTrack].data,
         tracks[currentTrack].length,
         false);
 }
 
+void playback()
+{
+    if (current_playback_state == STOPPED)
+    {
+        // If stopped, just return
+        return;
+    }
+    // Start playback
+    dma_channel_set_read_addr(CTRL_CHAN_A, (void *)&tracks[currentTrack].data, false);
+    dma_channel_set_read_addr(DATA_CHAN_A, tracks[currentTrack].data, false);
+    dma_channel_set_trans_count(DATA_CHAN_A, tracks[currentTrack].length, false);
+
+    // Start only the control channel — this will chain into data channel
+    dma_channel_start(CTRL_CHAN_A);
+}
+
+void stopPlayback()
+{
+    // Stop playback
+    dma_channel_abort(DATA_CHAN_A);
+    dma_channel_abort(CTRL_CHAN_A);
+}
+
 void setupDrumsDMA()
 {
     // Control channel B setup
-    dma_channel_config c_ctrl_B = dma_channel_get_default_config(ctrl_chan_B);
+    dma_channel_config c_ctrl_B = dma_channel_get_default_config(CTRL_CHAN_B);
     channel_config_set_transfer_data_size(&c_ctrl_B, DMA_SIZE_32);
     channel_config_set_read_increment(&c_ctrl_B, false);
     channel_config_set_write_increment(&c_ctrl_B, false);
-    channel_config_set_chain_to(&c_ctrl_B, data_chan_B);
+    channel_config_set_chain_to(&c_ctrl_B, DATA_CHAN_B);
 
     dma_channel_configure(
-        ctrl_chan_B, &c_ctrl_B,
-        &dma_hw->ch[data_chan_B].read_addr,
+        CTRL_CHAN_B, &c_ctrl_B,
+        &dma_hw->ch[DATA_CHAN_B].read_addr,
         (void *)&drums[0].data, // dummy default, will change when triggered
         1, false);
 
     // Data channel B setup
-    dma_channel_config c_data_B = dma_channel_get_default_config(data_chan_B);
+    dma_channel_config c_data_B = dma_channel_get_default_config(DATA_CHAN_B);
     channel_config_set_transfer_data_size(&c_data_B, DMA_SIZE_16);
     channel_config_set_read_increment(&c_data_B, true);
     channel_config_set_write_increment(&c_data_B, false);
@@ -1070,38 +629,44 @@ void setupDrumsDMA()
 
     // Use same DMA timer 0 (0x3B), same frequency
     channel_config_set_dreq(&c_data_B, 0x3B);
-    channel_config_set_chain_to(&c_data_B, data_chan_B);
+    channel_config_set_chain_to(&c_data_B, DATA_CHAN_B);
 
     dma_channel_configure(
-        data_chan_B, &c_data_B,
+        DATA_CHAN_B, &c_data_B,
         &spi_get_hw(SPI_PORT)->dr,
         drums[0].data,
         drums[0].length,
         false);
 }
 
-void playback()
+void playDrum(int drumIndex)
 {
-    if (current_playback_state == PAUSE)
-    {
-        // If paused, just return
+    if (drumIndex < 0 || drumIndex >= NUM_DRUMS)
         return;
-    }
+
+    printf("\nPlaying drum %d\n", drumIndex);
+
+    // Abort any previous transfer
+    dma_channel_abort(DATA_CHAN_B);
+    dma_channel_abort(CTRL_CHAN_B);
+
+    // Clear any pending interrupt flags (optional but clean)
+    dma_channel_acknowledge_irq0(DATA_CHAN_B);
+    dma_channel_acknowledge_irq0(CTRL_CHAN_B);
+
+    // Setup new transfer
+    dma_channel_set_read_addr(CTRL_CHAN_B, &drums[drumIndex].data, false);
+    dma_channel_set_trans_count(CTRL_CHAN_B, 1, false);
+    dma_channel_set_read_addr(DATA_CHAN_B, drums[drumIndex].data, false);
+    dma_channel_set_trans_count(DATA_CHAN_B, drums[drumIndex].length, false);
+
     // Start playback
-    dma_channel_set_read_addr(ctrl_chan_A, (void *)&tracks[currentTrack].data, false);
-    dma_channel_set_read_addr(data_chan_A, tracks[currentTrack].data, false);
-    dma_channel_set_trans_count(data_chan_A, tracks[currentTrack].length, false);
-
-    // Start only the control channel — this will chain into data channel
-    dma_channel_start(ctrl_chan_A);
+    dma_start_channel_mask((1u << CTRL_CHAN_B));
 }
 
-void stopPlayback()
-{
-    // Stop playback
-    dma_channel_abort(data_chan_A);
-    dma_channel_abort(ctrl_chan_A);
-}
+/* ********************************************************************* */
+/*                              THREADS                                  */
+/* ********************************************************************* */
 
 /* ===== KEYPAD THREAD ===== */
 
@@ -1219,7 +784,7 @@ static PT_THREAD(thread_keypad_input(struct pt *pt))
                 {
                     currentTrack = (currentTrack + 1) % 2;
                     stopPlayback();
-                    setupDMA();
+                    setupBackingTrackDMA();
                     if (current_playback_state == PLAY)
                     {
                         playback();
@@ -1239,7 +804,6 @@ static PT_THREAD(thread_keypad_input(struct pt *pt))
                     if (current_playback_state == PLAY)
                     {
                         stopPlayback();
-                        // setupDMA();
                         playback();
                     }
                     else
@@ -1248,40 +812,6 @@ static PT_THREAD(thread_keypad_input(struct pt *pt))
                         stopPlayback();
                     }
                 }
-                // else if (possible == 7)
-                // {
-                //     // Key 7 -> Play kick
-                //     playDrum(0); // 0 = kick
-                //     send_note_to_vga(MSG_DRUMS_CHANGE, '0');
-                // }
-                // else if (possible == 8)
-                // {
-                //     // Key 8 -> Play snare
-                //     playDrum(1); // 1 = snare
-                //     send_note_to_vga(MSG_DRUMS_CHANGE, '1');
-                // }
-                // else if (possible == 9)
-                // {
-                //     // Key 9 -> Play hihat
-                //     playDrum(2); // 2 = hihat
-                //     send_note_to_vga(MSG_DRUMS_CHANGE, '2');
-                // }
-                // else if (possible == 11)
-                // { // Key 12: cycle backing track
-                //     if (backingState == BACKING_NONE)
-                //     {
-                //         backingState = BACKING_DRUMS;
-                //     }
-                //     else if (backingState == BACKING_DRUMS)
-                //     {
-                //         backingState = BACKING_JAZZY;
-                //     }
-                //     else
-                //     {
-                //         backingState = BACKING_NONE;
-                //     }
-                //     updateBackingTrackPlayback();
-                // }
                 BOUNCE_STATE = PRESSED;
             }
             else
@@ -1313,6 +843,424 @@ static PT_THREAD(thread_keypad_input(struct pt *pt))
     }
     // Indicate thread end
     PT_END(pt);
+}
+
+/* ===== PITCH BENDING THREAD ===== */
+
+static PT_THREAD(thread_pitch_bend(struct pt *pt))
+{
+    PT_BEGIN(pt);
+
+    static uint16_t adc_raw;
+    static fix15 new_fix_mult;
+    static fix15 last_fix_mult = float2fix15(1.0); // Default to no bend
+
+    while (1)
+    {
+        // Read the potentiometer on ADC0
+        adc_select_input(ADC0_CHAN);
+        adc_raw = adc_read();
+
+        // Precompute the scale in fixed-point
+        fix15 adc_frac_fix15 = divfix(int2fix15(adc_raw), int2fix15(4095)); // adc_raw / 4095
+        new_fix_mult = FIX15_MIN_PITCH + multfix15(adc_frac_fix15, FIX15_RANGE_PITCH);
+
+        // Filter potentiometer noise
+        if (absfix15(new_fix_mult - last_fix_mult) >= BEND_THRESHOLD)
+        {
+            pitch_multiplier_fix15 = new_fix_mult;
+            // printf("\nPitch Multiplier: %f\n", fix2float15(pitch_multiplier_fix15));
+            // adc raw
+            // printf("ADC Raw: %d\n", adc_raw);
+            last_fix_mult = new_fix_mult;
+        }
+
+        PT_YIELD_usec(30000);
+    }
+
+    PT_END(pt);
+}
+
+/* ===== GUITAR THREAD ===== */
+
+static PT_THREAD(thread_guitar(struct pt *pt))
+{
+    PT_BEGIN(pt);
+
+    while (1)
+    {
+        if (current_instrument == GUITAR && active_note >= 0 && active_note < 8)
+        {
+            // Set the phase increment for the guitar
+            char *current_pressed_note = get_current_pressed_note();
+            play_guitar_note(current_pressed_note);
+        }
+
+        PT_YIELD_usec(30000);
+    }
+
+    PT_END(pt);
+}
+
+/* ===== POLL QUEUE THREAD ===== */
+
+static PT_THREAD(thread_poll_queue(struct pt *pt))
+{
+    PT_BEGIN(pt);
+    while (1)
+    {
+        poll_queue_step();
+        PT_YIELD(pt);
+    }
+    PT_END(pt);
+}
+
+/* ===== PIANO KEY VISUALIZATION VGA THREAD ===== */
+
+static PT_THREAD(protothread_keys(struct pt *pt))
+{
+    // Mark beginning of thread
+    PT_BEGIN(pt);
+
+    // Variables for maintaining frame rate
+    static int begin_time;
+    static int spare_time;
+
+    int x_offset = 6 * (X_DIMENSION / 10) - 40;
+    int y_offset = 2 * (Y_DIMENSION / 5) - 40;
+
+    while (1)
+    {
+        // Measure time at start of thread
+        begin_time = time_us_32();
+        char *current_pressed_note = get_current_pressed_note();
+
+        if (current_instrument == DRUMS)
+        {
+            strcpy(current_pressed_note, "X");
+        }
+
+        // Draw white keys
+        for (int i = 0; i < 14; i++)
+        {
+            const char *note = white_keys[i];
+            int x = x_offset + i * 21;
+
+            // Determine top alignment style
+            int top_x;
+            if (strcmp(note, "C4") == 0 || strcmp(note, "F4") == 0 ||
+                strcmp(note, "C5") == 0 || strcmp(note, "F5") == 0)
+            {
+                top_x = x; // No black key to its left
+            }
+            else
+            {
+                top_x = x + 5; // Black key to its left
+            }
+
+            uint16_t color = strcmp(current_pressed_note, note) == 0 ? ORANGE : WHITE;
+            fillRect(top_x, y_offset, 15, 60, color);  // top portion
+            fillRect(x, y_offset + 60, 20, 40, color); // bottom portion
+        }
+
+        // Draw black keys
+        for (int i = 0; i < 10; i++)
+        {
+            int left_white_x = x_offset + black_keys[i].left_white_index * 21;
+            int black_x = left_white_x + 15; // centered between white keys
+            uint16_t color = strcmp(current_pressed_note, black_keys[i].name) == 0 ? ORANGE : BLACK;
+            fillRect(black_x, y_offset, 11, 60, color);
+        }
+
+        spare_time = FRAME_RATE2 - (time_us_32() - begin_time);
+        // yield for necessary amount of time
+        PT_YIELD_usec(spare_time);
+        // NEVER exit while
+    } // END WHILE(1)
+    PT_END(pt);
+} // animation thread
+
+/* ===== DRUM PAD VISUALIZATION VGA THREAD ===== */
+
+static PT_THREAD(protothread_vga_drums(struct pt *pt))
+{
+    // Mark beginning of thread
+    PT_BEGIN(pt);
+
+    // Variables for maintaining frame rate
+    static int begin_time;
+    static int spare_time;
+
+    // x,y offsets for the drums positions
+    int x_offset = 2 * (X_DIMENSION / 10) - 40;
+    int y_offset = 2 * (Y_DIMENSION / 5) - 40;
+    int drum_size = 50;
+
+    while (1)
+    {
+        // Measure time at start of thread
+        begin_time = time_us_32();
+
+        // if current_instrument is drums, then draw a arena around the 2X2 drum set
+        // else erase the arena
+        // print 2X2 drum set
+        setCursor(x_offset, y_offset);
+
+        // erase the drum set 1
+        // fillRect(x_offset, y_offset, drum_size, drum_size, BLACK);
+        // draw the drum set 1
+        fillRect(x_offset, y_offset, drum_size, drum_size, current_pressed_drums == 0 ? WHITE : RED);
+
+        // erase the drum set 2
+        // fillRect(x_offset + drum_size + 2, y_offset, drum_size, drum_size, BLACK);
+        // draw the drum set 2
+        fillRect(x_offset + drum_size + 2, y_offset, drum_size, drum_size, current_pressed_drums == 1 ? WHITE : BLUE);
+
+        // draw the drum set 3
+        fillRect(x_offset, y_offset + drum_size + 2, drum_size, drum_size, current_pressed_drums == 2 ? BLACK : GREEN);
+        // draw the drum set 4
+        fillRect(x_offset + drum_size + 2, y_offset + drum_size + 2, drum_size, drum_size, current_pressed_drums == 3 ? BLACK : YELLOW);
+
+        // reset the drum state to -1
+        current_pressed_drums = -1;
+        spare_time = FRAME_RATE - (time_us_32() - begin_time);
+        // yield for necessary amount of time
+        PT_YIELD_usec(spare_time);
+        // NEVER exit while
+    } // END WHILE(1)
+    PT_END(pt);
+} // animation thread
+
+/* ===== TITLE AND INSTRUCTION VGA THREAD ===== */
+
+static PT_THREAD(protothread_vga_title(struct pt *pt))
+{
+    PT_BEGIN(pt);
+
+    static int begin_time;
+    static int spare_time;
+    static uint32_t instructions_start_time = 0;
+    static bool title_drawn = false;
+    static const int title_offset = 140;
+
+    static char *
+        instructions[] = {
+            "Press # to change instrument and * to change backing track.",
+            "In piano or guitar mode, press keys 1-8 to play notes, or press 9 to change key signatures.",
+            "Use the knob to bend piano notes, and press keys 7-9 to play drums.",
+            "Press 0 to play or stop the backing track.",
+            "NOW GO MAKE SOME MUSIC AND HAVE FUN!"};
+    static const int y_istructions_start = 50;
+    const int num_instructions = sizeof(instructions) / sizeof(instructions[0]);
+
+    while (1)
+    {
+        begin_time = time_us_32();
+
+        // Draw title and instructions once
+        if (!title_drawn)
+        {
+            // Draw title
+            setCursor((X_DIMENSION / 2) - title_offset, 5);
+            setTextSize(4);
+            setTextColor2(WHITE, BLACK);
+            writeString("DJ Synth Pad");
+
+            // Draw instructions once
+            setTextSize(1);
+            setTextColor2(PINK, BLACK);
+            int center_offset = 0;
+            int title_start = X_DIMENSION / 2 - title_offset;
+            for (int i = 0; i < num_instructions; i++)
+            {
+                int y_pos = y_istructions_start + (20 * i);
+
+                switch (i)
+                {
+                case 0:
+                    center_offset = -35;
+                    break;
+                case 1:
+                    center_offset = -130;
+                    break;
+                case 2:
+                    center_offset = -55;
+                    break;
+                case 3:
+                    center_offset = 15;
+                    break;
+                case 4:
+                    center_offset = 37;
+                    setTextColor2(GREEN, BLACK);
+                    break;
+                default:
+                    center_offset = 0;
+                    break;
+                }
+
+                setCursor(title_start + center_offset, y_pos);
+                writeString(instructions[i]);
+
+                // Reset color after line 4
+                if (i == 4)
+                    setTextColor2(PINK, BLACK);
+            }
+
+            title_drawn = true;
+            instructions_start_time = begin_time;
+        }
+        spare_time = FRAME_RATE - (time_us_32() - begin_time);
+        PT_YIELD_usec(spare_time);
+    }
+    PT_END(pt);
+}
+
+/* ===== STATE UPDATE VGA THREAD ===== */
+
+static PT_THREAD(protothread_vga_state(struct pt *pt))
+{
+    // Mark beginning of thread
+    PT_BEGIN(pt);
+
+    // Variables for maintaining frame rate
+    static int begin_time;
+    static int spare_time;
+    char screentext[40];
+
+    while (1)
+    {
+        // Measure time at start of thread
+        begin_time = time_us_32();
+        int x_offset = X_DIMENSION / 10;
+        int y_offset = 4 * (Y_DIMENSION / 5);
+
+        // print key signature
+        setCursor(x_offset, y_offset);
+        setTextSize(1);
+        setTextColor2(GREEN, BLACK);
+        sprintf(screentext, "Key Signature: %s      ", key_names[current_key]);
+        writeString(screentext);
+
+        // print instrument
+        setCursor(x_offset, y_offset + 20);
+        setTextSize(1);
+        setTextColor2(GREEN, BLACK);
+        sprintf(screentext, "Instrument: %s      ", instrument_names[current_instrument]);
+        writeString(screentext);
+
+        spare_time = FRAME_RATE - (time_us_32() - begin_time);
+        // yield for necessary amount of time
+        PT_YIELD_usec(spare_time);
+        // NEVER exit while
+    } // END WHILE(1)
+    PT_END(pt);
+} // animation thread
+
+/* ===== TRACK SEEK VISUALIZATION VGA THREAD ===== */
+
+static PT_THREAD(protothread_track_state(struct pt *pt))
+{
+    // Mark beginning of thread
+    PT_BEGIN(pt);
+
+    // Variables for maintaining frame rate
+    static int begin_time;
+    static int spare_time;
+    int x_offset = 8 * (X_DIMENSION / 10) - 40;
+    int y_offset = 4 * (Y_DIMENSION / 5);
+    char screentext[40];
+
+    while (1)
+    {
+        // Measure time at start of thread
+        begin_time = time_us_32();
+
+        // print seek line with position of the cursor
+        setCursor(x_offset, y_offset);
+        drawHLine(x_offset, y_offset, 160, WHITE);
+
+        setCursor(x_offset + seek_position, y_offset);
+        drawRect(x_offset + seek_position, y_offset, 2, 2, BLACK);
+
+        if (current_playback_state == PLAY)
+        {
+            seek_position += 1;
+        }
+        else
+        {
+            seek_position = 0;
+        }
+        setCursor(x_offset + seek_position, y_offset);
+        drawRect(x_offset + seek_position, y_offset, 2, 2, PINK);
+
+        if (seek_position >= 160)
+        {
+            seek_position = 0;
+        }
+
+        // print play, pause, next, previous
+        setCursor(x_offset, y_offset + 20);
+        setTextSize(1);
+        setTextColor2(GREEN, BLACK);
+
+        // print play/pause
+        if (current_playback_state == PLAY)
+        {
+            writeString("<<      Playing...      >>");
+        }
+        else
+        {
+            writeString("<<        Stopped       >>");
+        }
+
+        // print backing track name
+        setCursor(x_offset, y_offset + 40);
+        setTextSize(1);
+        setTextColor2(GREEN, BLACK);
+
+        // string to hold the track name, "Drums" or "Jazzy"
+        char track_name[20];
+        if (currentTrack == 0)
+        {
+            strcpy(track_name, "Drums");
+        }
+        else if (currentTrack == 1)
+        {
+            strcpy(track_name, "Jazzy");
+        }
+        else
+        {
+            strcpy(track_name, "Unknown");
+        }
+
+        sprintf(screentext, "Backing Track: %s      ", track_name);
+        writeString(screentext);
+
+        spare_time = FRAME_RATE - (time_us_32() - begin_time);
+        // yield for necessary amount of time
+        PT_YIELD_usec(spare_time);
+        // NEVER exit while
+    } // END WHILE(1)
+    PT_END(pt);
+} // animation thread
+
+/* ********************************************************************* */
+/*                          MAIN FUNCTIONS                               */
+/* ********************************************************************* */
+
+/* ===== CORE 1 MAIN FUNCTION ===== */
+
+void core1_main()
+{
+    // add all VGA threads
+    pt_add_thread(thread_poll_queue); // poll queue thread
+    pt_add_thread(protothread_vga_title);
+    pt_add_thread(protothread_vga_state);
+    pt_add_thread(protothread_track_state);
+    pt_add_thread(protothread_vga_drums);
+    pt_add_thread(protothread_keys);
+    // Start the scheduler
+    pt_schedule_start;
 }
 
 /* ===== MAIN ===== */
@@ -1384,9 +1332,8 @@ int main()
     // =====================================
     // ========== DMA SETUP ================
     // =====================================
-    setupDMA();
-
-    setupDrumsDMA(); // Setup DMA for the Drums
+    setupBackingTrackDMA();
+    setupDrumsDMA();
     playback();
 
     setupADC0();
