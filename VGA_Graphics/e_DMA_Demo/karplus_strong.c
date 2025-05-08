@@ -36,8 +36,7 @@ int saw_length = 20;
 
 volatile int string_length[n_note + 1] = {
     76, 72, 68, 64, 60, 57, 54, 51, 48, 45, 42, 40,
-    38, 36, 34, 32, 30, 28,
-    26, 24, 23  // G5, G#5, A5
+    38, 36, 34, 32, 30, 28, 26, 24, 23, 22 // A5 added
 };
 
 volatile s15x16 eta[n_note + 1] = {
@@ -47,10 +46,7 @@ volatile s15x16 eta[n_note + 1] = {
     float_to_s15x16(0.375), float_to_s15x16(0.0526), float_to_s15x16(0.3387),
     float_to_s15x16(0.315), float_to_s15x16(0.298), float_to_s15x16(0.282),
     float_to_s15x16(0.267), float_to_s15x16(0.253), float_to_s15x16(0.239),
-    float_to_s15x16(0.226), // G5
-    float_to_s15x16(0.201), // G#5
-    float_to_s15x16(0.156)  // A5
-};
+    float_to_s15x16(0.226), float_to_s15x16(0.213), float_to_s15x16(0.156), float_to_s15x16(0.201)};
 int current_pluck = 1;
 volatile s15x16 tuning_out, last_tune_out, last_tune_in;
 volatile s15x16 lowpass_out;
