@@ -1,5 +1,5 @@
 /*
-    DJ Sampler Pad + Audio Mixer
+    DJ Synthesizer Pad
     ECE 5730 Final Project
     Nicholas Papapanou (ngp37) and Sivaraman Sankar (ss4362)
 
@@ -212,8 +212,6 @@ uint16_t DAC_data_0; // output value
 #define BASE_KEYPAD_PIN 9
 #define KEYROWS 4
 #define NUMKEYS 12
-
-#define LED 25
 
 unsigned int keycodes[12] = {0x28, 0x11, 0x21, 0x41, 0x12,
                              0x22, 0x42, 0x14, 0x24, 0x44,
@@ -688,9 +686,6 @@ static PT_THREAD(thread_keypad_input(struct pt *pt))
 
     while (1)
     {
-        // Blink LED and check for key press
-        gpio_put(LED, !gpio_get(LED));
-
         // Scan the keypad!
         for (i = 0; i < KEYROWS; i++)
         {
@@ -1270,13 +1265,16 @@ int main()
     // Overclock the chip to 250MHz
     set_sys_clock_khz(250000, true);
 
-    // ====================================
-    // ====== Initialization block ========
-    // ====================================
     stdio_init_all();
-    initVGA();
 
-    // Setup SPI
+    /* ===== Setup VGA, ADC, and Keypad ===== */
+
+    initVGA();
+    setupADC0();
+    setupKeypad();
+
+    /* ===== Setup SPI/DAC ===== */
+
     spi_init(SPI_PORT, 20000000);          // baud rate set to 20MHz
     spi_set_format(SPI_PORT, 16, 0, 0, 0); // (channel, data bits per transfer, polarity, phase, order)
 
@@ -1296,21 +1294,13 @@ int main()
     gpio_set_dir(ISR_GPIO, GPIO_OUT);
     gpio_put(ISR_GPIO, 0);
 
-    // Map LED to GPIO port, make it low
-    gpio_init(LED);
-    gpio_set_dir(LED, GPIO_OUT);
-    gpio_put(LED, 0);
-
-    // ====================================
-    // ============ DDS block =============
-    // ====================================
+    /* ===== SETUP PIANO (DDS) + GUITAR (KARPLUS STRONG) SYNTHESIS ===== */
 
     // set up increments for calculating envelope
     attack_inc = divfix(max_amplitude, int2fix15(ATTACK_TIME));
     decay_inc = divfix(max_amplitude, int2fix15(DECAY_TIME));
 
-    // Build the sine lookup table
-    // scaled to produce values between 0 and 4096 (for 12-bit DAC)
+    // Build the sine lookup table scaled to produce values between 0 and 4096 (for 12-bit DAC)
     int ii;
     for (ii = 0; ii < sine_table_size; ii++)
     {
@@ -1326,29 +1316,24 @@ int main()
     // Write the lower 32 bits of the target time to the alarm register, arming it.
     timer_hw->alarm[ALARM_NUM] = timer_hw->timerawl + DELAY;
 
-    // Guitar setup
     init_karplus_strong();
+    
+    /* ===== Setup DMA ===== */
 
-    // =====================================
-    // ========== DMA SETUP ================
-    // =====================================
     setupBackingTrackDMA();
     setupDrumsDMA();
     playback();
 
-    setupADC0();
-    setupKeypad();
+    /* ===== Add Core 0 Threads ===== */
 
-    // Add core 0 threads
     pt_add_thread(thread_keypad_input);
     pt_add_thread(thread_pitch_bend);
     pt_add_thread(thread_guitar);
 
-    // Start core 1
+    /* ===== Start Core 1 + Scheduler===== */
+
     multicore_reset_core1();
     multicore_launch_core1(&core1_main);
-
-    // Start scheduling core 0 threads
     pt_schedule_start;
 
     current_note_index = -1; // No tone by default
