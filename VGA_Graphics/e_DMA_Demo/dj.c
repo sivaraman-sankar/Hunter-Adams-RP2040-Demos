@@ -238,8 +238,8 @@ int prev_key = 0;
 #define CTRL_CHAN_B 9
 
 // uS per frame
-#define FRAME_RATE 33000
-#define FRAME_RATE2 66000
+#define FRAME_RATE 33000 // ~30 fps
+#define FRAME_RATE2 66000 // ~60 fps
 
 // Screen dimensions
 #define X_DIMENSION 640
@@ -259,6 +259,11 @@ AudioTrack tracks[] = {
     {backing_drums1, backing_drums1_len},
     {backing_jazzy, backing_jazzy_len},
     // Add more here
+};
+
+const int track_total_frames[] = {
+    182, // Drums: 6.00 sec
+    162  // Jazzy: 5.36 sec
 };
 
 typedef struct
@@ -1110,6 +1115,7 @@ static PT_THREAD(protothread_vga_state(struct pt *pt))
     int x_offset = 240;
     int y_offset = 3 * (Y_DIMENSION / 5) + 45;
     char screentext[40];
+    static int seek_frame_counter = 0;
 
     while (1)
     {
@@ -1122,14 +1128,14 @@ static PT_THREAD(protothread_vga_state(struct pt *pt))
         fillCircle(x_offset + previous_seek_position, y_offset, 3, BLACK);
 
         // Update seek position
-        if (current_playback_state == PLAY)
-        {
-            seek_position += 1;
-            if (seek_position >= 160)
-                seek_position = 0;
-        }
-        else
-        {
+        if (current_playback_state == PLAY) {
+            seek_frame_counter++;
+            if (seek_frame_counter >= track_total_frames[currentTrack]) {
+                seek_frame_counter = 0;
+            }
+            seek_position = (160 * seek_frame_counter) / track_total_frames[currentTrack];
+        } else {
+            seek_frame_counter = 0;
             seek_position = 0;
         }
 
