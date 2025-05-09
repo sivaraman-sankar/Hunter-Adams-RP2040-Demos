@@ -68,6 +68,7 @@
 #include "backing_drums1.c"
 #include "backing_jazzy.c"
 #include "backing_rock.c"
+#include "backing_mellow.c"
 
 #include "kick.c"
 #include "snare.c"
@@ -113,7 +114,7 @@ volatile PlaybackState current_playback_state = STOPPED; // Default to stopped
 volatile InstrumentState current_instrument = PIANO;
 char *instrument_names[3] = {"Piano", "Guitar", "Drums"};
 
-#define NUM_TRACKS 3
+#define NUM_TRACKS 4
 int currentTrack = 0;
 
 // Low-level alarm infrastructure we'll be using
@@ -264,12 +265,14 @@ AudioTrack tracks[] = {
     {backing_drums1, backing_drums1_len},
     {backing_jazzy, backing_jazzy_len},
     {backing_rock, backing_rock_len},
+    {backing_mellow, backing_mellow_len},
 };
 
 const int track_total_frames[] = {
-    182, // Drums: 6.00 sec * 30 fps
-    162, // Jazzy: 5.36 sec * 30 fps
-    262, // Rock: 8.74 sec * 30 fps
+    182, // Drums: 6.00 sec * 30.3 fps
+    162, // Jazzy: 5.36 sec * 30.3 fps
+    265, // Rock: 8.74 sec * 30.3 fps
+    243, // Mellow: 8.03 sec * 30.3 fps
 };
 
 typedef struct
@@ -750,7 +753,7 @@ static PT_THREAD(thread_keypad_input(struct pt *pt))
             active_note = -1;
         }
 
-        // Keypad debounce for 6 - 9
+        // Keypad debouncing FSM
         switch (BOUNCE_STATE)
         {
         case NOT_PRESSED:
@@ -859,7 +862,6 @@ static PT_THREAD(thread_keypad_input(struct pt *pt))
 
         PT_YIELD_usec(30000);
     }
-    // Indicate thread end
     PT_END(pt);
 }
 
@@ -998,12 +1000,10 @@ static PT_THREAD(protothread_keys(struct pt *pt))
         }
 
         spare_time = FRAME_RATE2 - (time_us_32() - begin_time);
-        // yield for necessary amount of time
         PT_YIELD_usec(spare_time);
-        // NEVER exit while
-    } // END WHILE(1)
+    }
     PT_END(pt);
-} // animation thread
+} 
 
 /* ===== DRUM PAD VISUALIZATION VGA THREAD ===== */
 
@@ -1028,14 +1028,37 @@ static PT_THREAD(protothread_vga_drums(struct pt *pt))
         begin_time = time_us_32();
 
         // First row: drums 0, 1, 2
-        fillRect(x_offset, y_offset, drum_size, drum_size, current_pressed_drums == 0 ? WHITE : RED);
+        fillRect(x_offset, y_offset, drum_size, drum_size, current_pressed_drums == 0 ? WHITE : LIGHT_PINK);
+        setCursor(x_offset + 14, y_offset + 23); // center "KICK"
+        setTextColor2(BLACK, current_pressed_drums == 0 ? WHITE : LIGHT_PINK);
+        setTextSize(1);
+        writeString("KICK");
+
         fillRect(x_offset + spacing, y_offset, drum_size, drum_size, current_pressed_drums == 1 ? WHITE : BLUE);
-        fillRect(x_offset + 2 * spacing, y_offset, drum_size, drum_size, current_pressed_drums == 2 ? WHITE : MAGENTA);
+        setCursor(x_offset + spacing + 9, y_offset + 23); // center "SNARE"
+        setTextColor2(BLACK, current_pressed_drums == 1 ? WHITE : BLUE);
+        writeString("SNARE");
+
+        fillRect(x_offset + 2 * spacing, y_offset, drum_size, drum_size, current_pressed_drums == 2 ? WHITE : RED);
+        setCursor(x_offset + 2 * spacing + 7, y_offset + 23); // center "HI-HAT"
+        setTextColor2(BLACK, current_pressed_drums == 2 ? WHITE : RED);
+        writeString("HI-HAT");
 
         // Second row: drums 3, 4, 5
-        fillRect(x_offset, y_offset + spacing, drum_size, drum_size, current_pressed_drums == 3 ? WHITE : GREEN);
+        fillRect(x_offset, y_offset + spacing, drum_size, drum_size, current_pressed_drums == 3 ? WHITE : MED_GREEN);
+        setCursor(x_offset + 11, y_offset + spacing + 21); // center "TOM2"
+        setTextColor2(BLACK, current_pressed_drums == 3 ? WHITE : MED_GREEN);
+        writeString("TOM 2");
+
         fillRect(x_offset + spacing, y_offset + spacing, drum_size, drum_size, current_pressed_drums == 4 ? WHITE : ORANGE);
-        fillRect(x_offset + 2 * spacing, y_offset + spacing, drum_size, drum_size, current_pressed_drums == 5 ? WHITE : CYAN);
+        setCursor(x_offset + spacing + 11, y_offset + spacing + 21); // center "TOM1"
+        setTextColor2(BLACK, current_pressed_drums == 4 ? WHITE : ORANGE);
+        writeString("TOM 1");
+
+        fillRect(x_offset + 2 * spacing, y_offset + spacing, drum_size, drum_size, current_pressed_drums == 5 ? WHITE : MAGENTA);
+        setCursor(x_offset + 2 * spacing + 13, y_offset + spacing + 21); // center "CLAP"
+        setTextColor2(BLACK, current_pressed_drums == 5 ? WHITE : MAGENTA);
+        writeString("CLAP");
 
         // reset the drum state to -1
         current_pressed_drums = -1;
@@ -1183,7 +1206,8 @@ static PT_THREAD(protothread_vga_state(struct pt *pt))
         sprintf(screentext, "Backing Track: %s      ",
             (currentTrack == 0) ? "Drums" :
             (currentTrack == 1) ? "Jazzy" :
-            (currentTrack == 2) ? "Rock" : "None");
+            (currentTrack == 2) ? "Rock" : 
+            (currentTrack == 3) ? "Mellow" : "None");
         writeString(screentext);
 
         // Print key signature
