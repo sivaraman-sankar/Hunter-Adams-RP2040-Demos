@@ -36,7 +36,7 @@ int saw_length = 20;
 
 volatile int string_length[n_note + 1] = {
     76, 72, 68, 64, 60, 57, 54, 51, 48, 45, 42, 40,
-    38, 36, 34, 32, 30, 28, 26, 24, 23, 22 // A5 added
+    38, 36, 34, 32, 30, 28, 26, 25, 23, 22 // A5 added
 };
 
 volatile s15x16 eta[n_note + 1] = {
