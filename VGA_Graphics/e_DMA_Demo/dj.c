@@ -245,8 +245,8 @@ int prev_key = 0;
 #define X_DIMENSION 640
 #define Y_DIMENSION 480
 
-char current_pressed_note[4] = "C4"; // Default to C4
-int current_pressed_drums = 0;       // Default to 0, ranges from [0,3]
+char current_pressed_note[4] = "X"; // Default to C4
+int current_pressed_drums = 0;      // Default to 0, ranges from [0,5]
 
 // Backing track struct
 typedef struct
@@ -740,40 +740,33 @@ static PT_THREAD(thread_keypad_input(struct pt *pt))
         switch (BOUNCE_STATE)
         {
         case NOT_PRESSED:
-            if ((i >= 6 && i <= 11) || i == 0)
-            {
-                possible = i;
-                BOUNCE_STATE = MAYBE_PRESSED;
-            }
+            possible = i;
+            BOUNCE_STATE = MAYBE_PRESSED;
             break;
 
         case MAYBE_PRESSED:
             if (i == possible)
             {
                 //
-                if (possible == 7 && current_instrument == DRUMS)
+                if (possible == 1 && current_instrument == DRUMS)
                 {
                     playDrum(0); // 0 = kick
                     send_note_to_vga(MSG_DRUMS_CHANGE, '0');
                 }
-                if (possible == 8 && current_instrument == DRUMS)
+                if (possible == 2 && current_instrument == DRUMS)
                 {
                     playDrum(1); // 1 = snare
                     send_note_to_vga(MSG_DRUMS_CHANGE, '1');
                 }
+                if (possible == 3 && current_instrument == DRUMS)
+                {
+                    playDrum(2); // 2 = hihat
+                    send_note_to_vga(MSG_DRUMS_CHANGE, '2');
+                }
                 if (possible == 9)
                 {
-                    if (current_instrument == DRUMS)
-                    {
-                        // key signature is not valid for drums
-                        playDrum(2); // 2 = hihat
-                        send_note_to_vga(MSG_DRUMS_CHANGE, '2');
-                    }
-                    else
-                    {
-                        // 9 Button -> change scale
-                        current_key = (current_key + 1) % NUM_KEYS;
-                    }
+                    // 9 Button -> change scale
+                    current_key = (current_key + 1) % NUM_KEYS;
                 }
                 if (possible == 10)
                 {
@@ -788,13 +781,12 @@ static PT_THREAD(thread_keypad_input(struct pt *pt))
                 }
                 if (possible == 11)
                 {
-                    // # Button -> change instrumment
+                    // # Button -> change instrument
                     current_instrument = (current_instrument + 1) % NUM_INSTRUMENTS;
-                    // current_playback_state = PLAY;
-                    // send_note_to_vga(MSG_INSTRUMENT_CHANGE, (char)next_instrument);
                 }
                 if (possible == 0)
                 {
+                    // * Button -> change backing track
                     current_playback_state = (current_playback_state + 1) % NUM_PLAYBACK_STATES;
                     if (current_playback_state == PLAY)
                     {
@@ -921,8 +913,8 @@ static PT_THREAD(protothread_keys(struct pt *pt))
     static int begin_time;
     static int spare_time;
 
-    int x_offset = 6 * (X_DIMENSION / 10) - 40;
-    int y_offset = 2 * (Y_DIMENSION / 5) - 40;
+    int x_offset = 265;
+    int y_offset = (Y_DIMENSION / 2) - 24;
 
     while (1)
     {
@@ -954,8 +946,15 @@ static PT_THREAD(protothread_keys(struct pt *pt))
             }
 
             uint16_t color = strcmp(current_pressed_note, note) == 0 ? ORANGE : WHITE;
-            fillRect(top_x, y_offset, 15, 60, color);  // top portion
-            fillRect(x, y_offset + 60, 20, 40, color); // bottom portion
+            if (strcmp(note, "D4") == 0 || strcmp(note, "G4") == 0 || strcmp(note, "A4") == 0 || 
+                strcmp(note, "D5") == 0 || strcmp(note, "G5") == 0 || strcmp(note, "A5") == 0)
+                {
+                    fillRect(top_x, y_offset, 10, 60, color);  // top portion for keys between two black notes
+                }
+            else {
+                fillRect(top_x, y_offset, 15, 60, color);  // top portion for all other keys
+            }
+            fillRect(x, y_offset + 60, 20, 40, color); // bottom portion for all keys
         }
 
         // Draw black keys
@@ -988,43 +987,35 @@ static PT_THREAD(protothread_vga_drums(struct pt *pt))
 
     // x,y offsets for the drums positions
     int x_offset = 2 * (X_DIMENSION / 10) - 40;
-    int y_offset = 2 * (Y_DIMENSION / 5) - 40;
+    int y_offset = (Y_DIMENSION / 2) - 25;
     int drum_size = 50;
+    int spacing = drum_size + 2;
 
     while (1)
     {
         // Measure time at start of thread
         begin_time = time_us_32();
 
-        // if current_instrument is drums, then draw a arena around the 2X2 drum set
-        // else erase the arena
-        // print 2X2 drum set
-        setCursor(x_offset, y_offset);
-
-        // erase the drum set 1
-        // fillRect(x_offset, y_offset, drum_size, drum_size, BLACK);
-        // draw the drum set 1
+        // First row: drums 0, 1, 2
         fillRect(x_offset, y_offset, drum_size, drum_size, current_pressed_drums == 0 ? WHITE : RED);
+        fillRect(x_offset + spacing, y_offset, drum_size, drum_size, current_pressed_drums == 1 ? WHITE : BLUE);
+        fillRect(x_offset + 2 * spacing, y_offset, drum_size, drum_size, current_pressed_drums == 2 ? WHITE : MAGENTA);
 
-        // erase the drum set 2
-        // fillRect(x_offset + drum_size + 2, y_offset, drum_size, drum_size, BLACK);
-        // draw the drum set 2
-        fillRect(x_offset + drum_size + 2, y_offset, drum_size, drum_size, current_pressed_drums == 1 ? WHITE : BLUE);
-
-        // draw the drum set 3
-        fillRect(x_offset, y_offset + drum_size + 2, drum_size, drum_size, current_pressed_drums == 2 ? BLACK : GREEN);
-        // draw the drum set 4
-        fillRect(x_offset + drum_size + 2, y_offset + drum_size + 2, drum_size, drum_size, current_pressed_drums == 3 ? BLACK : YELLOW);
+        // Second row: drums 3, 4, 5
+        fillRect(x_offset, y_offset + spacing, drum_size, drum_size, current_pressed_drums == 3 ? WHITE : GREEN);
+        fillRect(x_offset + spacing, y_offset + spacing, drum_size, drum_size, current_pressed_drums == 4 ? WHITE : YELLOW);
+        fillRect(x_offset + 2 * spacing, y_offset + spacing, drum_size, drum_size, current_pressed_drums == 5 ? WHITE : CYAN);
 
         // reset the drum state to -1
         current_pressed_drums = -1;
+
+        // Frame rate control
         spare_time = FRAME_RATE - (time_us_32() - begin_time);
-        // yield for necessary amount of time
         PT_YIELD_usec(spare_time);
-        // NEVER exit while
-    } // END WHILE(1)
+    }
+
     PT_END(pt);
-} // animation thread
+}
 
 /* ===== TITLE AND INSTRUCTION VGA THREAD ===== */
 
@@ -1036,16 +1027,16 @@ static PT_THREAD(protothread_vga_title(struct pt *pt))
     static int spare_time;
     static uint32_t instructions_start_time = 0;
     static bool title_drawn = false;
-    static const int title_offset = 140;
+    static const int title_x_offset = 140;
 
     static char *
         instructions[] = {
             "Press # to change instrument and * to change backing track.",
             "In piano or guitar mode, press keys 1-8 to play notes, or press 9 to change key signatures.",
-            "Use the knob to bend piano notes, and press keys 7-9 to play drums.",
+            "Use the knob to bend piano notes, and press keys 1-6 to play drums.",
             "Press 0 to play or stop the backing track.",
             "NOW GO MAKE SOME MUSIC AND HAVE FUN!"};
-    static const int y_istructions_start = 50;
+    static const int instructions_start_y = 102;
     const int num_instructions = sizeof(instructions) / sizeof(instructions[0]);
 
     while (1)
@@ -1056,7 +1047,7 @@ static PT_THREAD(protothread_vga_title(struct pt *pt))
         if (!title_drawn)
         {
             // Draw title
-            setCursor((X_DIMENSION / 2) - title_offset, 5);
+            setCursor((X_DIMENSION / 2) - title_x_offset, 50);
             setTextSize(4);
             setTextColor2(WHITE, BLACK);
             writeString("DJ Synth Pad");
@@ -1065,10 +1056,10 @@ static PT_THREAD(protothread_vga_title(struct pt *pt))
             setTextSize(1);
             setTextColor2(PINK, BLACK);
             int center_offset = 0;
-            int title_start = X_DIMENSION / 2 - title_offset;
+            int title_start = X_DIMENSION / 2 - title_x_offset;
             for (int i = 0; i < num_instructions; i++)
             {
-                int y_pos = y_istructions_start + (20 * i);
+                int y_pos = instructions_start_y + (20 * i);
 
                 switch (i)
                 {
@@ -1087,6 +1078,7 @@ static PT_THREAD(protothread_vga_title(struct pt *pt))
                 case 4:
                     center_offset = 37;
                     setTextColor2(GREEN, BLACK);
+                    y_pos = y_pos + 8;
                     break;
                 default:
                     center_offset = 0;
@@ -1095,10 +1087,6 @@ static PT_THREAD(protothread_vga_title(struct pt *pt))
 
                 setCursor(title_start + center_offset, y_pos);
                 writeString(instructions[i]);
-
-                // Reset color after line 4
-                if (i == 4)
-                    setTextColor2(PINK, BLACK);
             }
 
             title_drawn = true;
@@ -1110,134 +1098,81 @@ static PT_THREAD(protothread_vga_title(struct pt *pt))
     PT_END(pt);
 }
 
-/* ===== STATE UPDATE VGA THREAD ===== */
+/* ===== TRACK SEEK VISUALIZATION + STATE UPDATE VGA THREAD ===== */
 
 static PT_THREAD(protothread_vga_state(struct pt *pt))
 {
-    // Mark beginning of thread
     PT_BEGIN(pt);
 
-    // Variables for maintaining frame rate
     static int begin_time;
     static int spare_time;
+    static int previous_seek_position = 0; // Store previous circle location
+    int x_offset = 240;
+    int y_offset = 3 * (Y_DIMENSION / 5) + 45;
     char screentext[40];
 
     while (1)
     {
-        // Measure time at start of thread
         begin_time = time_us_32();
-        int x_offset = X_DIMENSION / 10;
-        int y_offset = 4 * (Y_DIMENSION / 5);
 
-        // print key signature
-        setCursor(x_offset, y_offset);
+        // Draw seek line
+        drawHLine(x_offset, y_offset, 160, WHITE);
+
+        // Erase the previous circle by overdrawing it in black
+        fillCircle(x_offset + previous_seek_position, y_offset, 3, BLACK);
+
+        // Update seek position
+        if (current_playback_state == PLAY)
+        {
+            seek_position += 1;
+            if (seek_position >= 160)
+                seek_position = 0;
+        }
+        else
+        {
+            seek_position = 0;
+        }
+
+        // Draw the new circle
+        fillCircle(x_offset + seek_position, y_offset, 3, WHITE);
+
+        // Update the previous position
+        previous_seek_position = seek_position;
+
+        // Print play/pause state
+        setCursor(x_offset, y_offset + 15);
         setTextSize(1);
-        setTextColor2(GREEN, BLACK);
+        setTextColor2(current_playback_state == PLAY ? GREEN : RED, BLACK);
+        writeString(current_playback_state == PLAY ? "<<      Playing...      >>" : "<<       Stopped!       >>");
+
+        // Print backing track name
+        setCursor(x_offset + 18, y_offset + 35);
+        setTextSize(1);
+        setTextColor2(WHITE, BLACK);
+        sprintf(screentext, "Backing Track: %s      ", (currentTrack == 0) ? "Drums" : (currentTrack == 1) ? "Jazzy"
+                                                                                                           : "Unknown");
+        writeString(screentext);
+
+        // Print key signature
+        setCursor(x_offset + 30, y_offset + 55);
+        setTextSize(1);
+        setTextColor2(YELLOW, BLACK);
         sprintf(screentext, "Key Signature: %s      ", key_names[current_key]);
         writeString(screentext);
 
-        // print instrument
-        setCursor(x_offset, y_offset + 20);
+        // Print instrument
+        setCursor(x_offset + 26, y_offset + 75);
         setTextSize(1);
-        setTextColor2(GREEN, BLACK);
+        setTextColor2(BLUE, BLACK);
         sprintf(screentext, "Instrument: %s      ", instrument_names[current_instrument]);
         writeString(screentext);
 
         spare_time = FRAME_RATE - (time_us_32() - begin_time);
-        // yield for necessary amount of time
         PT_YIELD_usec(spare_time);
-        // NEVER exit while
-    } // END WHILE(1)
+    }
+
     PT_END(pt);
-} // animation thread
-
-/* ===== TRACK SEEK VISUALIZATION VGA THREAD ===== */
-
-static PT_THREAD(protothread_track_state(struct pt *pt))
-{
-    // Mark beginning of thread
-    PT_BEGIN(pt);
-
-    // Variables for maintaining frame rate
-    static int begin_time;
-    static int spare_time;
-    int x_offset = 8 * (X_DIMENSION / 10) - 40;
-    int y_offset = 4 * (Y_DIMENSION / 5);
-    char screentext[40];
-
-    while (1)
-    {
-        // Measure time at start of thread
-        begin_time = time_us_32();
-
-        // print seek line with position of the cursor
-        setCursor(x_offset, y_offset);
-        drawHLine(x_offset, y_offset, 160, WHITE);
-
-        setCursor(x_offset + seek_position, y_offset);
-        drawRect(x_offset + seek_position, y_offset, 2, 2, BLACK);
-
-        if (current_playback_state == PLAY)
-        {
-            seek_position += 1;
-        }
-        else
-        {
-            seek_position = 0;
-        }
-        setCursor(x_offset + seek_position, y_offset);
-        drawRect(x_offset + seek_position, y_offset, 2, 2, PINK);
-
-        if (seek_position >= 160)
-        {
-            seek_position = 0;
-        }
-
-        // print play, pause, next, previous
-        setCursor(x_offset, y_offset + 20);
-        setTextSize(1);
-        setTextColor2(GREEN, BLACK);
-
-        // print play/pause
-        if (current_playback_state == PLAY)
-        {
-            writeString("<<      Playing...      >>");
-        }
-        else
-        {
-            writeString("<<        Stopped       >>");
-        }
-
-        // print backing track name
-        setCursor(x_offset, y_offset + 40);
-        setTextSize(1);
-        setTextColor2(GREEN, BLACK);
-
-        // string to hold the track name, "Drums" or "Jazzy"
-        char track_name[20];
-        if (currentTrack == 0)
-        {
-            strcpy(track_name, "Drums");
-        }
-        else if (currentTrack == 1)
-        {
-            strcpy(track_name, "Jazzy");
-        }
-        else
-        {
-            strcpy(track_name, "Unknown");
-        }
-
-        sprintf(screentext, "Backing Track: %s      ", track_name);
-        writeString(screentext);
-
-        spare_time = FRAME_RATE - (time_us_32() - begin_time);
-        // yield for necessary amount of time
-        PT_YIELD_usec(spare_time);
-        // NEVER exit while
-    } // END WHILE(1)
-    PT_END(pt);
-} // animation thread
+}
 
 /* ********************************************************************* */
 /*                          MAIN FUNCTIONS                               */
@@ -1251,7 +1186,6 @@ void core1_main()
     pt_add_thread(thread_poll_queue); // poll queue thread
     pt_add_thread(protothread_vga_title);
     pt_add_thread(protothread_vga_state);
-    pt_add_thread(protothread_track_state);
     pt_add_thread(protothread_vga_drums);
     pt_add_thread(protothread_keys);
     // Start the scheduler
@@ -1317,7 +1251,7 @@ int main()
     timer_hw->alarm[ALARM_NUM] = timer_hw->timerawl + DELAY;
 
     init_karplus_strong();
-    
+
     /* ===== Setup DMA ===== */
 
     setupBackingTrackDMA();
@@ -1335,6 +1269,4 @@ int main()
     multicore_reset_core1();
     multicore_launch_core1(&core1_main);
     pt_schedule_start;
-
-    current_note_index = -1; // No tone by default
 }
