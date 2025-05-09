@@ -37,15 +37,6 @@
     "raspberry-pi-pico.cmakePath": "${HOME}/.pico-sdk/cmake/v3.31.5/bin/cmake",
     "raspberry-pi-pico.ninjaPath": "${HOME}/.pico-sdk/ninja/v1.12.1/ninja",
     "files.associations": {
-        "vga16_graphics.h": "c",
-        "constant.h": "c",
-        "dma.h": "c",
-        "string.h": "c",
-        "pt_cornell_rp2040_v1_3.h": "c",
-        "random": "c",
-        "fstream": "c",
-        "sstream": "c",
-        "streambuf": "c",
-        "utility": "c"
+        "stdlib.h": "c"
     }
 }

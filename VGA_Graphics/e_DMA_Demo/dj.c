@@ -67,10 +67,14 @@
 
 #include "backing_drums1.c"
 #include "backing_jazzy.c"
+#include "backing_rock.c"
 
 #include "kick.c"
 #include "snare.c"
 #include "hihat.c"
+#include "lowtom.c"
+#include "hightom.c"
+#include "clap.c"
 
 #include "shared.h"
 #include "karplus_strong.h"
@@ -109,7 +113,7 @@ volatile PlaybackState current_playback_state = STOPPED; // Default to stopped
 volatile InstrumentState current_instrument = PIANO;
 char *instrument_names[3] = {"Piano", "Guitar", "Drums"};
 
-#define NUM_TRACKS 2
+#define NUM_TRACKS 3
 int currentTrack = 0;
 
 // Low-level alarm infrastructure we'll be using
@@ -220,6 +224,7 @@ unsigned int scancodes[4] = {0x01, 0x02, 0x04, 0x08};
 unsigned int button = 0x70;
 volatile fix15 pitch_multiplier_fix15 = float2fix15(1.0); // Default: no pitch bend
 volatile int seek_position = 0;
+volatile int seek_frame_counter = 0;
 
 char keytext[40];
 int prev_key = 0;
@@ -258,12 +263,13 @@ typedef struct
 AudioTrack tracks[] = {
     {backing_drums1, backing_drums1_len},
     {backing_jazzy, backing_jazzy_len},
-    // Add more here
+    {backing_rock, backing_rock_len},
 };
 
 const int track_total_frames[] = {
-    182, // Drums: 6.00 sec
-    162  // Jazzy: 5.36 sec
+    182, // Drums: 6.00 sec * 30 fps
+    162, // Jazzy: 5.36 sec * 30 fps
+    262, // Rock: 8.74 sec * 30 fps
 };
 
 typedef struct
@@ -275,7 +281,10 @@ typedef struct
 DrumSample drums[] = {
     {kick, kick_len},
     {snare, snare_len},
-    {hihat, hihat_len}};
+    {hihat, hihat_len},
+    {lowtom, lowtom_len},
+    {hightom, hightom_len},
+    {clap, clap_len}};
 
 #define NUM_DRUMS (sizeof(drums) / sizeof(drums[0]))
 
@@ -768,6 +777,21 @@ static PT_THREAD(thread_keypad_input(struct pt *pt))
                     playDrum(2); // 2 = hihat
                     send_note_to_vga(MSG_DRUMS_CHANGE, '2');
                 }
+                if (possible == 4 && current_instrument == DRUMS)
+                {
+                    playDrum(3); // 3 = low tom
+                    send_note_to_vga(MSG_DRUMS_CHANGE, '3');
+                }
+                if (possible == 5 && current_instrument == DRUMS)
+                {
+                    playDrum(4); // 4 = high tom
+                    send_note_to_vga(MSG_DRUMS_CHANGE, '4');
+                }
+                if (possible == 6 && current_instrument == DRUMS)
+                {
+                    playDrum(5); // 5 = clap
+                    send_note_to_vga(MSG_DRUMS_CHANGE, '5');
+                }
                 if (possible == 9)
                 {
                     // 9 Button -> change scale
@@ -775,13 +799,15 @@ static PT_THREAD(thread_keypad_input(struct pt *pt))
                 }
                 if (possible == 10)
                 {
-                    currentTrack = (currentTrack + 1) % 2;
+                    // * Button -> change backing track
+                    currentTrack = (currentTrack + 1) % NUM_TRACKS;
+                    seek_position = 0;
+                    seek_frame_counter = 0;
                     stopPlayback();
                     setupBackingTrackDMA();
                     if (current_playback_state == PLAY)
                     {
                         playback();
-                        seek_position = 0;
                     }
                 }
                 if (possible == 11)
@@ -791,7 +817,7 @@ static PT_THREAD(thread_keypad_input(struct pt *pt))
                 }
                 if (possible == 0)
                 {
-                    // * Button -> change backing track
+                    // 0 Button -> stop/play
                     current_playback_state = (current_playback_state + 1) % NUM_PLAYBACK_STATES;
                     if (current_playback_state == PLAY)
                     {
@@ -1008,7 +1034,7 @@ static PT_THREAD(protothread_vga_drums(struct pt *pt))
 
         // Second row: drums 3, 4, 5
         fillRect(x_offset, y_offset + spacing, drum_size, drum_size, current_pressed_drums == 3 ? WHITE : GREEN);
-        fillRect(x_offset + spacing, y_offset + spacing, drum_size, drum_size, current_pressed_drums == 4 ? WHITE : YELLOW);
+        fillRect(x_offset + spacing, y_offset + spacing, drum_size, drum_size, current_pressed_drums == 4 ? WHITE : ORANGE);
         fillRect(x_offset + 2 * spacing, y_offset + spacing, drum_size, drum_size, current_pressed_drums == 5 ? WHITE : CYAN);
 
         // reset the drum state to -1
@@ -1115,7 +1141,6 @@ static PT_THREAD(protothread_vga_state(struct pt *pt))
     int x_offset = 240;
     int y_offset = 3 * (Y_DIMENSION / 5) + 45;
     char screentext[40];
-    static int seek_frame_counter = 0;
 
     while (1)
     {
@@ -1155,8 +1180,10 @@ static PT_THREAD(protothread_vga_state(struct pt *pt))
         setCursor(x_offset + 18, y_offset + 35);
         setTextSize(1);
         setTextColor2(WHITE, BLACK);
-        sprintf(screentext, "Backing Track: %s      ", (currentTrack == 0) ? "Drums" : (currentTrack == 1) ? "Jazzy"
-                                                                                                           : "Unknown");
+        sprintf(screentext, "Backing Track: %s      ",
+            (currentTrack == 0) ? "Drums" :
+            (currentTrack == 1) ? "Jazzy" :
+            (currentTrack == 2) ? "Rock" : "None");
         writeString(screentext);
 
         // Print key signature
@@ -1270,7 +1297,7 @@ int main()
     pt_add_thread(thread_pitch_bend);
     pt_add_thread(thread_guitar);
 
-    /* ===== Start Core 1 + Scheduler===== */
+    /* ===== Start Core 1 + Scheduler ===== */
 
     multicore_reset_core1();
     multicore_launch_core1(&core1_main);
